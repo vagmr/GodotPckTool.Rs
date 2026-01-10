@@ -491,9 +491,23 @@ pub fn prepare_pck_path_versioned(
         s = s[..s.len() - crate::GODOT_REMOVAL_TAG.len()].to_string();
     }
 
-    // Preserve explicit schemes (res:// or user://)
-    if s.starts_with(crate::GODOT_RES_PATH) || s.starts_with(crate::GODOT_USER_PATH) {
+    // Godot 4.4+ stores paths without the res:// prefix in the index.
+    // For older versions, we prepend res://.
+    let use_res_prefix = match godot_version {
+        Some(v) => v.major < 4 || (v.major == 4 && v.minor < 4),
+        None => true, // Default to old behavior (with res://) for safety
+    };
+
+    // Preserve explicit schemes (user:// always; res:// depends on version).
+    if s.starts_with(crate::GODOT_USER_PATH) {
         return (s, is_removal);
+    }
+    if let Some(rest) = s.strip_prefix(crate::GODOT_RES_PATH) {
+        if use_res_prefix {
+            return (s, is_removal);
+        }
+        let rest = rest.trim_start_matches('/');
+        return (rest.to_string(), is_removal);
     }
 
     // Handle extracted user paths: @@user@@/... -> user://...
@@ -501,13 +515,6 @@ pub fn prepare_pck_path_versioned(
         let rest = rest.trim_start_matches('/');
         return (format!("{}{}", crate::GODOT_USER_PATH, rest), is_removal);
     }
-
-    // Godot 4.4+ stores paths without the res:// prefix in the index.
-    // For older versions, we prepend res://.
-    let use_res_prefix = match godot_version {
-        Some(v) => v.major < 4 || (v.major == 4 && v.minor < 4),
-        None => true, // Default to old behavior (with res://) for safety
-    };
 
     if use_res_prefix {
         (format!("{GODOT_RES_PATH}{s}"), is_removal)
@@ -655,5 +662,31 @@ mod tests {
         loaded2.extract(&extract_dir, false).unwrap();
         let data = fs::read(extract_dir.join("a.bin")).unwrap();
         assert_eq!(data, b"abc");
+    }
+
+    #[test]
+    fn prepare_pck_path_versioned_strips_res_prefix_for_godot_4_4_plus() {
+        let version = Some(GodotVersion {
+            major: 4,
+            minor: 4,
+            patch: 0,
+        });
+
+        let (pck_path, is_removal) = prepare_pck_path_versioned("res://a/b.txt", "", version);
+        assert!(!is_removal);
+        assert_eq!(pck_path, "a/b.txt");
+
+        let (pck_path, is_removal) =
+            prepare_pck_path_versioned("res://a/b.txt.@@removal@@", "", version);
+        assert!(is_removal);
+        assert_eq!(pck_path, "a/b.txt");
+
+        let (pck_path, is_removal) = prepare_pck_path_versioned("user://a/b.txt", "", version);
+        assert!(!is_removal);
+        assert_eq!(pck_path, "user://a/b.txt");
+
+        let (pck_path, is_removal) = prepare_pck_path_versioned("res://a/b.txt", "", None);
+        assert!(!is_removal);
+        assert_eq!(pck_path, "res://a/b.txt");
     }
 }

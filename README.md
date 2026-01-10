@@ -3,10 +3,13 @@
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
+**[English](README.md)** | **[中文文档](README_CN.md)**
+
 A fast, cross-platform CLI tool for unpacking and packing Godot `.pck` files, rewritten in Rust.
 
-
 ## ✨ Features
+
+### Core Features
 
 - 📦 **List** contents of `.pck` files
 - 📤 **Extract** files from `.pck` archives
@@ -14,6 +17,28 @@ A fast, cross-platform CLI tool for unpacking and packing Godot `.pck` files, re
 - 🔄 **Repack** entire `.pck` files
 - 🎯 **Filter** files by size, name patterns (regex)
 - 📋 **JSON bulk operations** for scripting
+
+### 🔐 Encryption Support ()
+
+- **AES-256-CFB decryption** for encrypted PCK files (Godot 4+)
+- Decrypt both **encrypted index** and **encrypted files**
+- **Streaming decryption** for memory-efficient large file handling
+- MD5 integrity verification during decryption
+
+### 📦 Embedded PCK Support ()
+
+- **Auto-detect** embedded PCK in executables (self-contained games)
+- Extract PCK data from `.exe` or other executable formats
+- Supports both standalone `.pck` and embedded PCK files
+
+### 🛤️ Path Compatibility ()
+
+- **`user://`** paths extracted to `@@user@@/` directory
+- **`.@@removal@@`** suffix for deleted file markers
+- **Godot 4.4+** path format compatibility (`res://` prefix handling)
+
+### Platform & Performance
+
 - 🐧 **Cross-platform**: Windows, Linux, macOS
 - 🚀 **Fast**: Native Rust performance
 - 📦 **Single binary**: No dependencies required
@@ -79,6 +104,28 @@ godotpcktool --pack game.pck --action extract --output extracted
 
 # Quiet mode (less output)
 godotpcktool game.pck -a e -o extracted -q
+```
+
+### 🔐 Extracting Encrypted PCK ()
+
+```bash
+# Extract encrypted PCK with decryption key
+godotpcktool encrypted_game.pck -a e -o extracted --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+
+# The key must be 64 hex characters (32 bytes / 256 bits)
+# This is the same key used in Godot's export settings
+```
+
+> **Note**: The encryption key is the same one configured in Godot's export presets under "Encryption" → "Encryption Key". It should be a 64-character hexadecimal string.
+
+### 📦 Extracting from Embedded PCK ()
+
+```bash
+# Extract from self-contained executable (embedded PCK)
+godotpcktool game.exe -a e -o extracted
+
+# The tool automatically detects embedded PCK in executables
+# Works with both .exe (Windows) and other executable formats
 ```
 
 ### Adding Content
@@ -175,6 +222,7 @@ echo '[{"file":"test.txt","target":"data/test.txt"}]' | godotpcktool game.pck -a
 | `--action`                  | `-a`  | Action: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r` |
 | `--output`                  | `-o`  | Output directory for extraction                            |
 | `--file`                    | `-f`  | Files to add (comma-separated or multiple flags)           |
+| `--key`                     | `-k`  | **🔐 Encryption key (64 hex chars) for encrypted PCK**     |
 | `--remove-prefix`           |       | Prefix to remove from file paths                           |
 | `--command-file`            |       | JSON file with bulk commands                               |
 | `--set-godot-version`       |       | Set Godot version for new pck (e.g., `4.2.0`)              |
@@ -238,15 +286,31 @@ GodotPckTool/
 │   ├── Cargo.toml
 │   └── src/
 │       ├── lib.rs      # PCK read/parse logic
-│       └── write.rs    # PCK write logic
+│       ├── write.rs    # PCK write logic
+│       └── crypto.rs   # 🔐 AES-256-CFB encryption/decryption
 ├── Dockerfile
 └── README.md
 ```
 
 ## ⚠️ Limitations
 
-- **Encrypted PCK files**: Detection only - decryption not supported
+- **Encryption (write)**: Creating new encrypted PCK files is not yet supported (decryption only)
 - **Sparse bundles**: Warning displayed, may not work correctly
+
+## 🔐 Encryption Technical Details
+
+| Property    | Value                              |
+| ----------- | ---------------------------------- |
+| Algorithm   | AES-256-CFB                        |
+| Key Size    | 256 bits (32 bytes / 64 hex chars) |
+| Block Size  | 16 bytes                           |
+| Header Size | 40 bytes (MD5 + size + IV)         |
+
+**Encrypted block structure:**
+
+```
+[16 bytes MD5] [8 bytes original_size] [16 bytes IV] [encrypted data...]
+```
 
 ## 📄 License
 
