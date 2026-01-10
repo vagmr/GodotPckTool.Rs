@@ -13,3 +13,5 @@ anyhow.workspace = true
 regex.workspace = true
 md-5.workspace = true
 walkdir.workspace = true
+aes.workspace = true
+cfb-mode.workspace = true

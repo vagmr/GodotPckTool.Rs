@@ -54,6 +54,10 @@ struct Args {
     #[arg(long = "print-hashes")]
     print_hashes: bool,
 
+    /// 32-byte hex string (64 characters) for encrypted PCK files
+    #[arg(short = 'k', long = "encryption-key")]
+    encryption_key: Option<String>,
+
     #[arg(short = 'v', long = "version")]
     version: bool,
 
@@ -105,6 +109,18 @@ fn run() -> i32 {
             println!("ERROR: invalid regex: {e}");
             return 1;
         }
+    };
+
+    // Parse encryption key if provided
+    let encryption_key = match &args.encryption_key {
+        Some(hex) => match godotpck_rs::parse_hex_key(hex) {
+            Ok(key) => Some(key),
+            Err(e) => {
+                println!("ERROR: invalid encryption key: {e}");
+                return 1;
+            }
+        },
+        None => None,
     };
 
     let mut files = args.files;
@@ -224,9 +240,9 @@ fn run() -> i32 {
     };
 
     match args.action.as_str() {
-        "list" | "l" => list_action(&pack, &filter, args.print_hashes),
-        "extract" | "e" => extract_action(&pack, &filter, args.output.as_ref(), !args.quieter),
-        "repack" | "r" => repack_action(&pack, &filter, &file_entries),
+        "list" | "l" => list_action(&pack, &filter, args.print_hashes, encryption_key),
+        "extract" | "e" => extract_action(&pack, &filter, args.output.as_ref(), !args.quieter, encryption_key),
+        "repack" | "r" => repack_action(&pack, &filter, &file_entries, encryption_key),
         "add" | "a" => add_action(
             &pack,
             &filter,
@@ -234,6 +250,7 @@ fn run() -> i32 {
             args.quieter,
             &file_entries,
             requested_godot_version,
+            encryption_key,
         ),
         _ => {
             println!("ERROR: unknown action: {}", args.action);
@@ -242,7 +259,12 @@ fn run() -> i32 {
     }
 }
 
-fn list_action(pack: &PathBuf, filter: &godotpck_rs::FileFilter, print_hashes: bool) -> i32 {
+fn list_action(
+    pack: &PathBuf,
+    filter: &godotpck_rs::FileFilter,
+    print_hashes: bool,
+    encryption_key: Option<[u8; 32]>,
+) -> i32 {
     if !pack.exists() {
         println!(
             "ERROR: specified pck file doesn't exist: {}",
@@ -251,7 +273,7 @@ fn list_action(pack: &PathBuf, filter: &godotpck_rs::FileFilter, print_hashes: b
         return 2;
     }
 
-    let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
+    let pck = match godotpck_rs::PckFile::load(pack, Some(filter), encryption_key) {
         Ok(pck) => pck,
         Err(e) => {
             println!("ERROR: couldn't load pck file: {}", pack.display());
@@ -287,6 +309,7 @@ fn extract_action(
     filter: &godotpck_rs::FileFilter,
     output: Option<&PathBuf>,
     print_extracted: bool,
+    encryption_key: Option<[u8; 32]>,
 ) -> i32 {
     if !pack.exists() {
         println!(
@@ -301,7 +324,7 @@ fn extract_action(
         return 1;
     };
 
-    let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
+    let pck = match godotpck_rs::PckFile::load(pack, Some(filter), encryption_key) {
         Ok(pck) => pck,
         Err(e) => {
             println!("ERROR: couldn't load pck file: {}", pack.display());
@@ -330,7 +353,12 @@ fn extract_action(
     0
 }
 
-fn repack_action(pack: &PathBuf, filter: &godotpck_rs::FileFilter, file_entries: &[FileEntry]) -> i32 {
+fn repack_action(
+    pack: &PathBuf,
+    filter: &godotpck_rs::FileFilter,
+    file_entries: &[FileEntry],
+    encryption_key: Option<[u8; 32]>,
+) -> i32 {
     if !pack.exists() {
         println!(
             "ERROR: specified pck file doesn't exist: {}",
@@ -339,7 +367,7 @@ fn repack_action(pack: &PathBuf, filter: &godotpck_rs::FileFilter, file_entries:
         return 2;
     }
 
-    let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
+    let pck = match godotpck_rs::PckFile::load(pack, Some(filter), encryption_key) {
         Ok(pck) => pck,
         Err(_) => {
             println!("ERROR: couldn't load pck file: {}", pack.display());
@@ -384,6 +412,7 @@ fn add_action(
     quieter: bool,
     file_entries: &[FileEntry],
     requested_godot_version: godotpck_rs::GodotVersion,
+    encryption_key: Option<[u8; 32]>,
 ) -> i32 {
     if file_entries.is_empty() {
         println!("ERROR: no files specified");
@@ -393,7 +422,7 @@ fn add_action(
     let mut builder = if pack.exists() {
         println!("Target pck exists, loading it before adding new files");
 
-        let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
+        let pck = match godotpck_rs::PckFile::load(pack, Some(filter), encryption_key) {
             Ok(pck) => pck,
             Err(_) => {
                 println!("ERROR: couldn't load existing target pck. Please change the target or delete the existing file.");

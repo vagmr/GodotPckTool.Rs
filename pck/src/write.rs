@@ -118,6 +118,17 @@ impl PckBuilder {
         pck_path: String,
         filter: Option<&FileFilter>,
     ) -> Result<bool> {
+        self.add_single_file_with_flags(filesystem_path, pck_path, 0, filter)
+    }
+
+    /// Add a single file with explicit flags (e.g., for removal entries).
+    pub fn add_single_file_with_flags(
+        &mut self,
+        filesystem_path: impl AsRef<Path>,
+        pck_path: String,
+        flags: u32,
+        filter: Option<&FileFilter>,
+    ) -> Result<bool> {
         let filesystem_path = filesystem_path.as_ref();
 
         let metadata = fs::metadata(filesystem_path)
@@ -139,7 +150,7 @@ impl PckBuilder {
             BuildEntry {
                 path: pck_path,
                 size,
-                flags: 0,
+                flags,
                 source: EntrySource::Filesystem {
                     path: filesystem_path.to_path_buf(),
                 },
@@ -149,6 +160,8 @@ impl PckBuilder {
         Ok(true)
     }
 
+    /// Add files from filesystem with version-aware path handling.
+    /// This method uses the builder's godot_version to determine path format.
     pub fn add_files_from_filesystem(
         &mut self,
         root: &str,
@@ -161,10 +174,12 @@ impl PckBuilder {
         }
 
         let mut added = Vec::new();
+        let version = Some(self.godot_version);
 
         if root_path.is_file() {
-            let pck_path = prepare_pck_path(root, strip_prefix);
-            if self.add_single_file(&root_path, pck_path.clone(), filter)? {
+            let (pck_path, is_removal) = prepare_pck_path_versioned(root, strip_prefix, version);
+            let flags = if is_removal { crate::PCK_FILE_DELETED } else { 0 };
+            if self.add_single_file_with_flags(&root_path, pck_path.clone(), flags, filter)? {
                 added.push((root.to_string(), pck_path));
             }
             return Ok(added);
@@ -182,9 +197,10 @@ impl PckBuilder {
 
             let fs_path = entry.path();
             let fs_path_string = fs_path.to_string_lossy();
-            let pck_path = prepare_pck_path(&fs_path_string, strip_prefix);
+            let (pck_path, is_removal) = prepare_pck_path_versioned(&fs_path_string, strip_prefix, version);
+            let flags = if is_removal { crate::PCK_FILE_DELETED } else { 0 };
 
-            if self.add_single_file(fs_path, pck_path.clone(), filter)? {
+            if self.add_single_file_with_flags(fs_path, pck_path.clone(), flags, filter)? {
                 added.push((fs_path_string.to_string(), pck_path));
             }
         }
@@ -388,7 +404,21 @@ impl PckBuilder {
     }
 }
 
-pub fn prepare_pck_path(path: &str, strip_prefix: &str) -> String {
+/// Prepare a filesystem path for storage in a PCK file.
+///
+/// - Strips `strip_prefix` from the beginning of the path
+/// - Normalizes path separators to forward slashes
+/// - Maps `@@user@@/...` back to `user://...`
+/// - Strips `.@@removal@@` suffix and sets the removal flag (caller must handle flag)
+/// - For Godot < 4.4: prepends `res://` if no scheme is present
+/// - For Godot >= 4.4: stores paths without `res://` prefix (but keeps `user://`)
+///
+/// Returns `(pck_path, is_removal)` where `is_removal` indicates if the file had the removal tag.
+pub fn prepare_pck_path_versioned(
+    path: &str,
+    strip_prefix: &str,
+    godot_version: Option<GodotVersion>,
+) -> (String, bool) {
     let mut s = path.to_string();
     if !strip_prefix.is_empty() {
         if let Some(stripped) = s.strip_prefix(strip_prefix) {
@@ -401,7 +431,42 @@ pub fn prepare_pck_path(path: &str, strip_prefix: &str) -> String {
         s.remove(0);
     }
 
-    format!("{GODOT_RES_PATH}{s}")
+    // Check and strip removal tag
+    let is_removal = s.ends_with(crate::GODOT_REMOVAL_TAG);
+    if is_removal {
+        s = s[..s.len() - crate::GODOT_REMOVAL_TAG.len()].to_string();
+    }
+
+    // Preserve explicit schemes (res:// or user://)
+    if s.starts_with(crate::GODOT_RES_PATH) || s.starts_with(crate::GODOT_USER_PATH) {
+        return (s, is_removal);
+    }
+
+    // Handle extracted user paths: @@user@@/... -> user://...
+    if let Some(rest) = s.strip_prefix(crate::GODOT_EXTRACT_USER_DIR) {
+        let rest = rest.trim_start_matches('/');
+        return (format!("{}{}", crate::GODOT_USER_PATH, rest), is_removal);
+    }
+
+    // Godot 4.4+ stores paths without the res:// prefix in the index.
+    // For older versions, we prepend res://.
+    let use_res_prefix = match godot_version {
+        Some(v) => v.major < 4 || (v.major == 4 && v.minor < 4),
+        None => true, // Default to old behavior (with res://) for safety
+    };
+
+    if use_res_prefix {
+        (format!("{GODOT_RES_PATH}{s}"), is_removal)
+    } else {
+        (s, is_removal)
+    }
+}
+
+/// Legacy wrapper for `prepare_pck_path_versioned` that assumes old Godot behavior (with res:// prefix).
+/// This is kept for backward compatibility with existing code.
+pub fn prepare_pck_path(path: &str, strip_prefix: &str) -> String {
+    let (pck_path, _is_removal) = prepare_pck_path_versioned(path, strip_prefix, None);
+    pck_path
 }
 
 fn pad_to_alignment<W: Write + Seek>(writer: &mut W, alignment: u64) -> Result<()> {
@@ -492,7 +557,7 @@ mod tests {
 
         builder.write().unwrap();
 
-        let loaded = PckFile::load(&pck_path, None).unwrap();
+        let loaded = PckFile::load(&pck_path, None, None).unwrap();
         assert_eq!(loaded.entries().count(), 1);
 
         let extract_dir = base.join("extract");
@@ -525,13 +590,13 @@ mod tests {
             .unwrap();
         builder.write().unwrap();
 
-        let loaded = PckFile::load(&pck_path, None).unwrap();
+        let loaded = PckFile::load(&pck_path, None, None).unwrap();
 
         let repacked_path = base.join("repacked.pck");
         let repacker = PckBuilder::from_loaded_pck(&loaded, &repacked_path);
         repacker.write().unwrap();
 
-        let loaded2 = PckFile::load(&repacked_path, None).unwrap();
+        let loaded2 = PckFile::load(&repacked_path, None, None).unwrap();
         let extract_dir = base.join("extract2");
         loaded2.extract(&extract_dir, false).unwrap();
         let data = fs::read(extract_dir.join("a.bin")).unwrap();

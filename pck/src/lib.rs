@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 use anyhow::{bail, Context, Result};
 use regex::Regex;
 
+mod crypto;
+pub use crypto::{parse_hex_key, ENCRYPTED_HEADER_SIZE};
+
 pub const PCK_HEADER_MAGIC: u32 = 0x4350_4447;
 
 pub const PACK_DIR_ENCRYPTED: u32 = 1 << 0;
@@ -19,9 +22,14 @@ pub const PCK_FILE_SPARSE_BUNDLE: u32 = 1 << 2;
 pub const MAX_SUPPORTED_PCK_VERSION_LOAD: u32 = 3;
 pub const GODOT_PCK_EXTENSION: &str = ".pck";
 pub const GODOT_RES_PATH: &str = "res://";
+pub const GODOT_USER_PATH: &str = "user://";
+/// When extracting, `user://` paths are mapped into this folder to stay filesystem-friendly.
+pub const GODOT_EXTRACT_USER_DIR: &str = "@@user@@";
+/// Suffix used to represent a "Removal" file when extracting/packing.
+pub const GODOT_REMOVAL_TAG: &str = ".@@removal@@";
 
 mod write;
-pub use write::{prepare_pck_path, BuildEntry, EntrySource, PckBuilder};
+pub use write::{prepare_pck_path, prepare_pck_path_versioned, BuildEntry, EntrySource, PckBuilder};
 
 
 #[derive(Debug, Clone)]
@@ -154,13 +162,31 @@ pub struct PckFile {
     header: PckHeader,
     entries: BTreeMap<String, PckEntry>,
     excluded_by_filter: usize,
+    /// Encryption key for encrypted PCK files (32 bytes)
+    encryption_key: Option<[u8; 32]>,
 }
+
 impl PckFile {
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    pub fn load(path: impl AsRef<Path>, filter: Option<&FileFilter>) -> Result<Self> {
+    /// Check if this PCK file is encrypted
+    pub fn is_encrypted(&self) -> bool {
+        self.header.flags & PACK_DIR_ENCRYPTED != 0
+    }
+
+    /// Load a PCK file with optional encryption key
+    ///
+    /// # Arguments
+    /// * `path` - Path to the PCK file
+    /// * `filter` - Optional file filter
+    /// * `encryption_key` - Optional 32-byte encryption key for encrypted PCK files
+    pub fn load(
+        path: impl AsRef<Path>,
+        filter: Option<&FileFilter>,
+        encryption_key: Option<[u8; 32]>,
+    ) -> Result<Self> {
 
         let path = path.as_ref().to_path_buf();
 
@@ -196,7 +222,9 @@ impl PckFile {
         }
 
         if flags & PACK_DIR_ENCRYPTED != 0 {
-            bail!("pck is encrypted");
+            if encryption_key.is_none() {
+                bail!("PCK is encrypted, please provide --encryption-key");
+            }
         }
 
         if flags & PCK_FILE_SPARSE_BUNDLE != 0 {
@@ -225,33 +253,103 @@ impl PckFile {
             }
         }
 
-        let file_count = read_u32_le(&mut file).context("reading file count")?;
+        // Handle encrypted directory/index
+        let mut index_cursor: Option<std::io::Cursor<Vec<u8>>> = None;
+
+        if flags & PACK_DIR_ENCRYPTED != 0 {
+            let key = encryption_key.as_ref().unwrap();
+
+            // Read encrypted header (40 bytes)
+            let mut header_buf = [0u8; crypto::ENCRYPTED_HEADER_SIZE];
+            file.read_exact(&mut header_buf)
+                .context("reading encrypted index header")?;
+
+            let enc_header = crypto::EncryptedHeader::parse(&header_buf)
+                .context("parsing encrypted index header")?;
+
+            // Read encrypted data (aligned to 16 bytes)
+            let encrypted_size = crypto::align_to_16(enc_header.original_size) as usize;
+            let mut encrypted_data = vec![0u8; encrypted_size];
+            file.read_exact(&mut encrypted_data)
+                .context("reading encrypted index data")?;
+
+            // Decrypt
+            let decrypted = crypto::decrypt_cfb(&encrypted_data, key, &enc_header.iv);
+
+            // Truncate to original size and verify MD5
+            let original_size = usize::try_from(enc_header.original_size)
+                .context("encrypted index original size too large")?;
+            if original_size > decrypted.len() {
+                bail!(
+                    "Encrypted index original size is larger than decrypted buffer: {} > {}",
+                    original_size,
+                    decrypted.len()
+                );
+            }
+            let decrypted_trimmed = decrypted[..original_size].to_vec();
+
+            if !crypto::verify_md5(&decrypted_trimmed, &enc_header.md5) {
+                bail!("Invalid encryption key (MD5 mismatch on index)");
+            }
+
+            index_cursor = Some(std::io::Cursor::new(decrypted_trimmed));
+        }
+
+        // Read file count from either decrypted index or file
+        let file_count = if let Some(ref mut cursor) = index_cursor {
+            read_u32_le(cursor).context("reading file count from decrypted index")?
+        } else {
+            read_u32_le(&mut file).context("reading file count")?
+        };
 
         let mut excluded_by_filter = 0usize;
         let mut entries = BTreeMap::new();
 
         for _ in 0..file_count {
-            let path_length = read_u32_le(&mut file).context("reading path length")? as usize;
-            let mut path_bytes = vec![0u8; path_length];
-            file.read_exact(&mut path_bytes)
-                .context("reading path bytes")?;
+            // Read from decrypted index or file
+            let (_path_length, path_bytes, rel_offset, size, md5, entry_flags) =
+                if let Some(ref mut cursor) = index_cursor {
+                    let path_length = read_u32_le(cursor).context("reading path length")? as usize;
+                    let mut path_bytes = vec![0u8; path_length];
+                    cursor.read_exact(&mut path_bytes).context("reading path bytes")?;
 
+                    let rel_offset = read_u64_le(cursor).context("reading entry offset")?;
+                    let size = read_u64_le(cursor).context("reading entry size")?;
+
+                    let mut md5 = [0u8; 16];
+                    cursor.read_exact(&mut md5).context("reading entry md5")?;
+
+                    let mut entry_flags = 0u32;
+                    if format_version >= 2 {
+                        entry_flags = read_u32_le(cursor).context("reading entry flags")?;
+                    }
+
+                    (path_length, path_bytes, rel_offset, size, md5, entry_flags)
+                } else {
+                    let path_length = read_u32_le(&mut file).context("reading path length")? as usize;
+                    let mut path_bytes = vec![0u8; path_length];
+                    file.read_exact(&mut path_bytes).context("reading path bytes")?;
+
+                    let rel_offset = read_u64_le(&mut file).context("reading entry offset")?;
+                    let size = read_u64_le(&mut file).context("reading entry size")?;
+
+                    let mut md5 = [0u8; 16];
+                    file.read_exact(&mut md5).context("reading entry md5")?;
+
+                    let mut entry_flags = 0u32;
+                    if format_version >= 2 {
+                        entry_flags = read_u32_le(&mut file).context("reading entry flags")?;
+                    }
+
+                    (path_length, path_bytes, rel_offset, size, md5, entry_flags)
+                };
+
+            let mut path_bytes = path_bytes;
             while path_bytes.last() == Some(&0) {
                 path_bytes.pop();
             }
 
             let path_string = String::from_utf8_lossy(&path_bytes).to_string();
-
-            let rel_offset = read_u64_le(&mut file).context("reading entry offset")?;
-            let size = read_u64_le(&mut file).context("reading entry size")?;
-
-            let mut md5 = [0u8; 16];
-            file.read_exact(&mut md5).context("reading entry md5")?;
-
-            let mut entry_flags = 0u32;
-            if format_version >= 2 {
-                entry_flags = read_u32_le(&mut file).context("reading entry flags")?;
-            }
 
             let offset = file_offset_base
                 .checked_add(rel_offset)
@@ -291,6 +389,7 @@ impl PckFile {
             },
             entries,
             excluded_by_filter,
+            encryption_key,
         })
     }
 
@@ -308,12 +407,16 @@ impl PckFile {
 
     pub fn print_file_list(&self, print_hashes: bool) {
         for entry in self.entries() {
-            // Print warnings for special flags (matching C++ behavior)
+            // Print info for special flags
             if entry.flags & PCK_FILE_ENCRYPTED != 0 {
-                println!(
-                    "WARNING: pck file ({}) is marked as encrypted, decoding the encryption is not implemented",
-                    entry.path
-                );
+                if self.encryption_key.is_some() {
+                    // We have the key, file will be decrypted during extraction
+                } else {
+                    println!(
+                        "WARNING: pck file ({}) is marked as encrypted, no encryption key provided",
+                        entry.path
+                    );
+                }
             }
             if entry.flags & PCK_FILE_DELETED != 0 {
                 println!(
@@ -324,6 +427,10 @@ impl PckFile {
 
             print!("{}", entry.path);
             print!(" size: {}", entry.size);
+
+            if entry.flags & PCK_FILE_ENCRYPTED != 0 {
+                print!(" [encrypted]");
+            }
 
             if print_hashes {
                 print!(" md5: {}", format_md5(entry.md5));
@@ -340,12 +447,13 @@ impl PckFile {
             .with_context(|| format!("opening pck file for extracting: {}", self.path.display()))?;
 
         for entry in self.entries() {
-            // Print warnings for special flags (matching C++ behavior)
-            if entry.flags & PCK_FILE_ENCRYPTED != 0 {
+            // Print info for special flags
+            if entry.flags & PCK_FILE_ENCRYPTED != 0 && self.encryption_key.is_none() {
                 println!(
-                    "WARNING: pck file ({}) is marked as encrypted, decoding the encryption is not implemented",
+                    "WARNING: pck file ({}) is marked as encrypted, skipping (no encryption key)",
                     entry.path
                 );
+                continue;
             }
             if entry.flags & PCK_FILE_DELETED != 0 {
                 println!(
@@ -354,11 +462,21 @@ impl PckFile {
                 );
             }
 
-            let relative_path = entry_path_to_relative(&entry.path);
+            let mut relative_path = entry_path_to_relative(&entry.path);
+            if entry.flags & PCK_FILE_DELETED != 0 {
+                let mut name = relative_path.to_string_lossy().to_string();
+                name.push_str(GODOT_REMOVAL_TAG);
+                relative_path = PathBuf::from(name);
+            }
             let target_file = output_base.join(&relative_path);
 
             if print_extracted {
-                println!("Extracting {} to {}", entry.path, target_file.display());
+                let encrypted_note = if entry.flags & PCK_FILE_ENCRYPTED != 0 {
+                    " [decrypting]"
+                } else {
+                    ""
+                };
+                println!("Extracting{} {} to {}", encrypted_note, entry.path, target_file.display());
             }
 
             if let Some(parent) = target_file.parent() {
@@ -372,15 +490,73 @@ impl PckFile {
             let mut writer = File::create(&target_file)
                 .with_context(|| format!("opening file for writing: {}", target_file.display()))?;
 
-            reader
-                .seek(SeekFrom::Start(entry.offset))
-                .with_context(|| format!("seeking to entry offset for {}", entry.path))?;
-            let mut take = std::io::Read::by_ref(&mut reader).take(entry.size);
-            let copied = std::io::copy(&mut take, &mut writer)
-                .with_context(|| format!("writing entry data for {}", entry.path))?;
+            // Handle encrypted files
+            if entry.flags & PCK_FILE_ENCRYPTED != 0 {
+                let key = self.encryption_key.as_ref().unwrap();
 
-            if copied != entry.size {
-                bail!("reading file entry content failed (specified offset or data length is too large, pck may be corrupt or malformed)");
+                // Seek to entry offset
+                reader
+                    .seek(SeekFrom::Start(entry.offset))
+                    .with_context(|| format!("seeking to entry offset for {}", entry.path))?;
+
+                // Read encrypted header (40 bytes)
+                let mut header_buf = [0u8; crypto::ENCRYPTED_HEADER_SIZE];
+                reader.read_exact(&mut header_buf)
+                    .with_context(|| format!("reading encrypted header for {}", entry.path))?;
+
+                let enc_header = crypto::EncryptedHeader::parse(&header_buf)
+                    .with_context(|| format!("parsing encrypted header for {}", entry.path))?;
+
+                // Read encrypted data (aligned to 16 bytes)
+                let encrypted_size = crypto::align_to_16(enc_header.original_size) as usize;
+                let mut encrypted_data = vec![0u8; encrypted_size];
+                reader.read_exact(&mut encrypted_data)
+                    .with_context(|| format!("reading encrypted data for {}", entry.path))?;
+
+                // Decrypt
+                let decrypted = crypto::decrypt_cfb(&encrypted_data, key, &enc_header.iv);
+
+                // Truncate to original size
+                let original_size = usize::try_from(enc_header.original_size)
+                    .with_context(|| format!("encrypted file original size too large for {}", entry.path))?;
+                if original_size != usize::try_from(entry.size).unwrap_or(usize::MAX) {
+                    bail!(
+                        "Encrypted file size mismatch for {} (index size: {}, block header size: {})",
+                        entry.path,
+                        entry.size,
+                        enc_header.original_size
+                    );
+                }
+                if original_size > decrypted.len() {
+                    bail!(
+                        "Encrypted file original size is larger than decrypted buffer for {}: {} > {}",
+                        entry.path,
+                        original_size,
+                        decrypted.len()
+                    );
+                }
+                let decrypted_data = &decrypted[..original_size];
+
+                // Verify MD5
+                if !crypto::verify_md5(decrypted_data, &enc_header.md5) {
+                    bail!("Invalid encryption key (MD5 mismatch on file {})", entry.path);
+                }
+
+                // Write decrypted data
+                writer.write_all(decrypted_data)
+                    .with_context(|| format!("writing decrypted data for {}", entry.path))?;
+            } else {
+                // Non-encrypted file: copy directly
+                reader
+                    .seek(SeekFrom::Start(entry.offset))
+                    .with_context(|| format!("seeking to entry offset for {}", entry.path))?;
+                let mut take = std::io::Read::by_ref(&mut reader).take(entry.size);
+                let copied = std::io::copy(&mut take, &mut writer)
+                    .with_context(|| format!("writing entry data for {}", entry.path))?;
+
+                if copied != entry.size {
+                    bail!("reading file entry content failed (specified offset or data length is too large, pck may be corrupt or malformed)");
+                }
             }
 
             writer.flush().context("flush writer")?;
@@ -400,11 +576,16 @@ fn format_md5(bytes: [u8; 16]) -> String {
 }
 
 fn entry_path_to_relative(entry_path: &str) -> PathBuf {
-    let without_prefix = entry_path
-        .strip_prefix(GODOT_RES_PATH)
-        .unwrap_or(entry_path);
-    let without_slashes = without_prefix.trim_start_matches('/');
-    PathBuf::from(without_slashes)
+    if let Some(rest) = entry_path.strip_prefix(GODOT_RES_PATH) {
+        return PathBuf::from(rest.trim_start_matches('/'));
+    }
+
+    if let Some(rest) = entry_path.strip_prefix(GODOT_USER_PATH) {
+        let rest = rest.trim_start_matches('/');
+        return PathBuf::from(format!("{GODOT_EXTRACT_USER_DIR}/{rest}"));
+    }
+
+    PathBuf::from(entry_path.trim_start_matches('/'))
 }
 
 fn read_u32_le<R: Read>(reader: &mut R) -> std::io::Result<u32> {
@@ -456,10 +637,14 @@ mod tests {
     }
 
     #[test]
-    fn entry_path_to_relative_strips_res_prefix_and_slashes() {
+    fn entry_path_to_relative_strips_prefixes_and_slashes() {
         assert_eq!(
             entry_path_to_relative("res://a/b.txt"),
             PathBuf::from("a/b.txt")
+        );
+        assert_eq!(
+            entry_path_to_relative("user://a/b.txt"),
+            PathBuf::from("@@user@@/a/b.txt")
         );
         assert_eq!(entry_path_to_relative("/a/b.txt"), PathBuf::from("a/b.txt"));
         assert_eq!(entry_path_to_relative("a/b.txt"), PathBuf::from("a/b.txt"));
