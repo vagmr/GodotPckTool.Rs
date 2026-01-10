@@ -4,5 +4,7 @@
 /install/
 .idea
 .snow
-/rust/target/
-/rust/test_output/
+target/
+test_output/
+extract_compare
+json_test

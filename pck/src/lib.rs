@@ -201,7 +201,7 @@ impl PckFile {
 
         if flags & PCK_FILE_SPARSE_BUNDLE != 0 {
             // This matches the old tool: it warns but continues.
-            // Keeping this in the library avoids hardcoding stdout here.
+            println!("Warning: Sparse pck detected, this is unlikely to work!");
         }
 
         if format_version >= 3 || (format_version == 2 && (flags & PCK_FILE_RELATIVE_BASE != 0)) {
@@ -308,6 +308,20 @@ impl PckFile {
 
     pub fn print_file_list(&self, print_hashes: bool) {
         for entry in self.entries() {
+            // Print warnings for special flags (matching C++ behavior)
+            if entry.flags & PCK_FILE_ENCRYPTED != 0 {
+                println!(
+                    "WARNING: pck file ({}) is marked as encrypted, decoding the encryption is not implemented",
+                    entry.path
+                );
+            }
+            if entry.flags & PCK_FILE_DELETED != 0 {
+                println!(
+                    "Pck file is marked as removed (but still processing it): {}",
+                    entry.path
+                );
+            }
+
             print!("{}", entry.path);
             print!(" size: {}", entry.size);
 
@@ -326,6 +340,20 @@ impl PckFile {
             .with_context(|| format!("opening pck file for extracting: {}", self.path.display()))?;
 
         for entry in self.entries() {
+            // Print warnings for special flags (matching C++ behavior)
+            if entry.flags & PCK_FILE_ENCRYPTED != 0 {
+                println!(
+                    "WARNING: pck file ({}) is marked as encrypted, decoding the encryption is not implemented",
+                    entry.path
+                );
+            }
+            if entry.flags & PCK_FILE_DELETED != 0 {
+                println!(
+                    "Pck file is marked as removed (but still processing it): {}",
+                    entry.path
+                );
+            }
+
             let relative_path = entry_path_to_relative(&entry.path);
             let target_file = output_base.join(&relative_path);
 
