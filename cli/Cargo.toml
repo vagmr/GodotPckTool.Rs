@@ -1,12 +1,20 @@
 [package]
-name = "godotpcktool"
+name = "godotpcktool-rs"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+description = "A fast CLI tool for unpacking and packing Godot .pck files"
+repository = "https://github.com/vagmr/GodotPckTool"
+keywords = ["godot", "pck", "game", "modding"]
+categories = ["command-line-utilities", "game-development"]
+
+[[bin]]
+name = "godotpcktool"
+path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
 clap.workspace = true
-godotpck = { path = "../pck" }
+godotpck-rs = { path = "../pck" }
 regex.workspace = true
 serde_json.workspace = true

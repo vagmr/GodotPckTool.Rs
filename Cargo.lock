@@ -159,7 +159,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "godotpck"
+name = "godotpck-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -169,12 +169,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "godotpcktool"
+name = "godotpcktool-rs"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "godotpck",
+ "godotpck-rs",
  "regex",
  "serde_json",
 ]

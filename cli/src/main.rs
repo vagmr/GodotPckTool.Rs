@@ -87,13 +87,13 @@ fn run() -> i32 {
         }
     };
 
-    let requested_godot_version = godotpck::GodotVersion {
+    let requested_godot_version = godotpck_rs::GodotVersion {
         major: godot_major,
         minor: godot_minor,
         patch: godot_patch,
     };
 
-    let filter = match godotpck::FileFilter::from_cli(
+    let filter = match godotpck_rs::FileFilter::from_cli(
         args.min_size_filter,
         args.max_size_filter,
         &args.include_regex_filter,
@@ -242,7 +242,7 @@ fn run() -> i32 {
     }
 }
 
-fn list_action(pack: &PathBuf, filter: &godotpck::FileFilter, print_hashes: bool) -> i32 {
+fn list_action(pack: &PathBuf, filter: &godotpck_rs::FileFilter, print_hashes: bool) -> i32 {
     if !pack.exists() {
         println!(
             "ERROR: specified pck file doesn't exist: {}",
@@ -251,7 +251,7 @@ fn list_action(pack: &PathBuf, filter: &godotpck::FileFilter, print_hashes: bool
         return 2;
     }
 
-    let pck = match godotpck::PckFile::load(pack, Some(filter)) {
+    let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
         Ok(pck) => pck,
         Err(e) => {
             println!("ERROR: couldn't load pck file: {}", pack.display());
@@ -284,7 +284,7 @@ fn list_action(pack: &PathBuf, filter: &godotpck::FileFilter, print_hashes: bool
 
 fn extract_action(
     pack: &PathBuf,
-    filter: &godotpck::FileFilter,
+    filter: &godotpck_rs::FileFilter,
     output: Option<&PathBuf>,
     print_extracted: bool,
 ) -> i32 {
@@ -301,7 +301,7 @@ fn extract_action(
         return 1;
     };
 
-    let pck = match godotpck::PckFile::load(pack, Some(filter)) {
+    let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
         Ok(pck) => pck,
         Err(e) => {
             println!("ERROR: couldn't load pck file: {}", pack.display());
@@ -330,7 +330,7 @@ fn extract_action(
     0
 }
 
-fn repack_action(pack: &PathBuf, filter: &godotpck::FileFilter, file_entries: &[FileEntry]) -> i32 {
+fn repack_action(pack: &PathBuf, filter: &godotpck_rs::FileFilter, file_entries: &[FileEntry]) -> i32 {
     if !pack.exists() {
         println!(
             "ERROR: specified pck file doesn't exist: {}",
@@ -339,7 +339,7 @@ fn repack_action(pack: &PathBuf, filter: &godotpck::FileFilter, file_entries: &[
         return 2;
     }
 
-    let pck = match godotpck::PckFile::load(pack, Some(filter)) {
+    let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
         Ok(pck) => pck,
         Err(_) => {
             println!("ERROR: couldn't load pck file: {}", pack.display());
@@ -367,7 +367,7 @@ fn repack_action(pack: &PathBuf, filter: &godotpck::FileFilter, file_entries: &[
 
     println!("Repacking to: {}", output_path.display());
 
-    let builder = godotpck::PckBuilder::from_loaded_pck(&pck, &output_path);
+    let builder = godotpck_rs::PckBuilder::from_loaded_pck(&pck, &output_path);
     if builder.write().is_err() {
         println!("Failed to repack");
         return 2;
@@ -379,11 +379,11 @@ fn repack_action(pack: &PathBuf, filter: &godotpck::FileFilter, file_entries: &[
 
 fn add_action(
     pack: &PathBuf,
-    filter: &godotpck::FileFilter,
+    filter: &godotpck_rs::FileFilter,
     remove_prefix: Option<&str>,
     quieter: bool,
     file_entries: &[FileEntry],
-    requested_godot_version: godotpck::GodotVersion,
+    requested_godot_version: godotpck_rs::GodotVersion,
 ) -> i32 {
     if file_entries.is_empty() {
         println!("ERROR: no files specified");
@@ -393,7 +393,7 @@ fn add_action(
     let mut builder = if pack.exists() {
         println!("Target pck exists, loading it before adding new files");
 
-        let pck = match godotpck::PckFile::load(pack, Some(filter)) {
+        let pck = match godotpck_rs::PckFile::load(pack, Some(filter)) {
             Ok(pck) => pck,
             Err(_) => {
                 println!("ERROR: couldn't load existing target pck. Please change the target or delete the existing file.");
@@ -409,16 +409,16 @@ fn add_action(
             );
         }
 
-        godotpck::PckBuilder::from_loaded_pck(&pck, pack)
+        godotpck_rs::PckBuilder::from_loaded_pck(&pck, pack)
     } else {
-        godotpck::PckBuilder::new_empty(pack, requested_godot_version)
+        godotpck_rs::PckBuilder::new_empty(pack, requested_godot_version)
     };
 
     let strip_prefix = remove_prefix.unwrap_or("");
 
     for entry in file_entries {
         if let Some(target) = &entry.target {
-            let pck_path = godotpck::prepare_pck_path(target, "");
+            let pck_path = godotpck_rs::prepare_pck_path(target, "");
             match builder.add_single_file(&entry.input_file, pck_path.clone(), Some(filter)) {
                 Ok(true) => {
                     if !quieter {

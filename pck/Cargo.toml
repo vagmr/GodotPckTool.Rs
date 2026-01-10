@@ -1,8 +1,12 @@
 [package]
-name = "godotpck"
+name = "godotpck-rs"
 version = "0.1.0"
 edition = "2021"
 license.workspace = true
+description = "Core library for reading and writing Godot .pck files"
+repository = "https://github.com/vagmr/GodotPckTool"
+keywords = ["godot", "pck", "game"]
+categories = ["game-development", "parsing"]
 
 [dependencies]
 anyhow.workspace = true

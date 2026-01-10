@@ -1,292 +1,253 @@
-Godot Pck Tool
-==============
+# GodotPckTool.rs 🦀
 
-A standalone executable for unpacking and packing Godot .pck files.
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Command line usage
-------------------
+A fast, cross-platform CLI tool for unpacking and packing Godot `.pck` files, rewritten in Rust.
 
-For these you just need the GodotPckTool executable. Available from
-the releases page. Or see the end of this file for building
-instructions.
 
-Note: if you don't install it on Linux you need to either use the full
-path or put it in a folder and run it as `./godotpcktool` similarly to
-Windows.
+## ✨ Features
 
-You can view the tool help by running `godotpcktool -h`
+- 📦 **List** contents of `.pck` files
+- 📤 **Extract** files from `.pck` archives
+- 📥 **Add** files to existing or new `.pck` files
+- 🔄 **Repack** entire `.pck` files
+- 🎯 **Filter** files by size, name patterns (regex)
+- 📋 **JSON bulk operations** for scripting
+- 🐧 **Cross-platform**: Windows, Linux, macOS
+- 🚀 **Fast**: Native Rust performance
+- 📦 **Single binary**: No dependencies required
 
-### Listing contents
+## 📥 Installation
 
-Lists the files inside a pck file.
+### From Releases
 
-```sh
-godotpcktool Thrive.pck
+Download the latest binary from the [Releases](https://github.com/vagmr/GodotPckTool/releases) page.
+
+### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/vagmr/GodotPckTool.git
+cd GodotPckTool
+
+# Build release binary
+cargo build --release
+
+# Binary will be at target/release/godotpcktool(.exe)
 ```
 
-Long form:
+### Using Docker
 
-```sh
-godotpcktool --pack Thrive.pck --action list
+```bash
+# Build image
+docker build -t godotpcktool .
+
+# Run
+docker run --rm -v /path/to/files:/data godotpcktool -p /data/game.pck -a list
 ```
 
-### Extracting contents
+## 🚀 Usage
 
-Extracts the contents of a pck file.
+View help:
 
-```sh
-godotpcktool Thrive.pck -a e -o extracted
+```bash
+godotpcktool --help
 ```
 
-Long form:
+### Listing Contents
 
-```sh
-godotpcktool --pack Thrive.pck --action extract --output extracted
+```bash
+# Short form (default action is list)
+godotpcktool game.pck
+
+# Long form
+godotpcktool --pack game.pck --action list
+
+# With MD5 hashes
+godotpcktool game.pck --print-hashes
 ```
 
-### Adding content
+### Extracting Contents
 
-Adds content to an existing pck or creates a new pck. When creating a
-new pck you can specify which Godot version the pck file says it is
-packed with using the flag `set-godot-version`.
+```bash
+# Extract to 'extracted' folder
+godotpcktool game.pck -a e -o extracted
 
-```sh
-godotpcktool Thrive.pck -a a extracted --remove-prefix extracted
+# Long form
+godotpcktool --pack game.pck --action extract --output extracted
+
+# Quiet mode (less output)
+godotpcktool game.pck -a e -o extracted -q
 ```
 
-Long form:
+### Adding Content
 
-```sh
-godotpcktool --pack Thrive.pck --action add --remove-prefix extracted --file extracted
+```bash
+# Add files with prefix removal
+godotpcktool game.pck -a a extracted --remove-prefix extracted
+
+# Long form
+godotpcktool --pack game.pck --action add --file extracted --remove-prefix extracted
+
+# Create new pck with specific Godot version
+godotpcktool new.pck -a a files/ --remove-prefix files --set-godot-version 4.2.0
 ```
 
-The files are added with the specified paths on the command line, but
-with the prefix removed. So for example if there was a file called
-`extracted/example.png` and `extracted/subfolder/file.txt` and the
-above command was used, those files would get added to the pck as
-`res://example.png` and `res://subfolder/file.txt`.
+### Repacking
 
-After adding files it is recommended to use the listing command to
-view the resulting data inside the pck to verify the expected actions
-happened correctly. When a new file matches exactly the path name
-inside the pck, it will replace that file.
-
-To have more control over the resulting paths inside the pck, see the
-section below on the JSON commands.
-
-### Filters
-
-Filters can be used to only act on a subset of files in a pck file, or
-from the filesystem.
-
-#### Min size
-
-Specify the minimum size under which files are excluded:
-
-```sh
-godotpcktool --min-size-filter 1000
+```bash
+# Repack entire pck (useful after modifications)
+godotpcktool game.pck -a r
 ```
 
-This will exclude files with size 999 bytes and below.
+## 🎯 Filters
 
-### Max size
+Filter files by various criteria:
 
-Specify the maximum size above which files are excluded:
+### Size Filters
 
-```sh
-godotpcktool --max-size-filter 1000
+```bash
+# Minimum size (exclude files < 1000 bytes)
+godotpcktool game.pck --min-size-filter 1000
+
+# Maximum size (exclude files > 1MB)
+godotpcktool game.pck --max-size-filter 1048576
+
+# Exact size
+godotpcktool game.pck --min-size-filter 1000 --max-size-filter 1000
 ```
 
-NOTE: if you use max size to compliment min size extraction, you
-should subtract one from the size, otherwise you'll operate on the
-same files twice.
+### Name Filters (Regex)
 
-However, if you want to work on exactly some size files you can specify the same size twice:
-```sh
-godotpcktool --min-size-filter 1 --max-size-filter 1
+```bash
+# Include only .png files
+godotpcktool game.pck -i '\.png$'
+
+# Exclude .import files
+godotpcktool game.pck -e '\.import$'
+
+# Combine filters
+godotpcktool game.pck -i '\.png$' -e 'thumbnail'
+
+# Override filter (include .txt regardless of size filter)
+godotpcktool game.pck --min-size-filter 1000 --include-override-filter '\.txt$'
 ```
 
-#### Include by name
+## 📋 JSON Bulk Operations
 
-The option to include files can be given a list of regular expressions that select only files
-that match at least one of them to be processed. For example, you can list all files containing
-"po" in their names with:
-```sh
-godotpcktool --include-regex-filter po
-```
+For precise control over file paths in the pck:
 
-Or if you want to require that to be the file extension (note that different shells require
-different escaping):
-```sh
-godotpcktool -i '\.po'
-```
+### Create a commands file (`commands.json`):
 
-Multiple regular expressions can be separated by comma, or specified by giving the option
-multiple times:
-```sh
-godotpcktool -i '\.po,\.txt'
-godotpcktool -i '\.po' -i '\.txt'
-```
-
-If no include filter is specified, all files pass through it. So not specifying an include
-filter means "process all files".
-
-Note that filtering is case-sensitive.
-
-#### Exclude by name
-
-Files can also be excluded if they match a regular expression:
-```sh
-godotpcktool --exclude-regex-filter txt
-```
-
-If both include and exclude filters are specified, then first the include filter is applied,
-after that the exclude filter is used to filter out files that passed the first filter.
-For example to find files containing "po" but no "zh":
-```sh
-godotpcktool -i '\.po' -e 'zh'
-```
-
-#### Overriding filters
-
-If you need more complex filtering you can specify regular expressions with
-`--include-override-filter` which makes any file matching any of those
-regular expression be included in the operation, even if another filter
-would cause the file to be excluded. For example, you can use this to set
-file size limits and then override those for specific type:
-```sh
-godotpcktool --min-size-filter 1000 --include-override-filter '\.txt'
-```
-
-#### JSON bulk operations
-
-To have more control over the resulting paths inside the pck file,
-there is a JSON operation API provided.
-
-To use it, you first need to create a JSON file (`commands.json` in
-the example command but any name can be used) with the following
-structure (as many files can be specified as required):
 ```json
 [
-    {
-        "file": "/path/to/file",
-        "target": "overridden/path/file"
-    },
-    {
-        "file": "LICENSE",
-        "target": "example/path/LICENSE"
-    }
+  {
+    "file": "/absolute/path/to/file.png",
+    "target": "textures/file.png"
+  },
+  {
+    "file": "relative/path/script.gd",
+    "target": "scripts/script.gd"
+  }
 ]
 ```
 
-Then run the following command to use it (the JSON command can always
-be specified when the add operation is used):
-```sh
-godotpcktool Thrive.pck -a a --command-file commands.json
+### Run with command file:
+
+```bash
+godotpcktool game.pck -a a --command-file commands.json
 ```
 
-This will read `/path/to/file` which can be an absolute or a relative
-path, and save it within the pck as `res://overridden/path/file` and
-also the `LICENSE` file as `res://example/path/LICENSE`. This way it
-is possible to use absolute paths and specify whatever path the file
-should end up as in the pck file for maximum control.
+### Stdin mode (for scripting):
 
-Note that the full path without the `res://` prefix needs to be in the
-JSON `target` property for where the file inside the pck should end up
-in; this mode doesn't support specifying just the folder so multiple
-files with `target` being `pck/folder` will overwrite each other
-rather than being placed inside `pck/folder`. So always specify full
-paths like `pck/folder/README.txt` rather than `pck/folder/` when
-specifying the JSON commands.
-
-
-### Advanced Options
-
-#### Specifying Engine Version
-
-When creating a .pck file it is possible to specify the Godot engine
-version the .pck says it is created with:
-
-```sh
-godotpcktool NewPack.pck -a a some_file.txt --set-godot-version 3.5.0
+```bash
+echo '[{"file":"test.txt","target":"data/test.txt"}]' | godotpcktool game.pck -a a -
 ```
 
-Note that this approach **does not** override the engine version number in existing .pck
-files. This currently only applies to new .pck files.
+> **Note**: The `target` field should NOT include the `res://` prefix - it will be added automatically.
 
-#### Scripting
+## 🔧 All Options
 
-It is possible to use the JSON bulk API without creating a temporary file. This is done by specifying `-` as the file to add and then writing the JSON to the tool's stdin and then closing it.
+| Option                      | Short | Description                                                |
+| --------------------------- | ----- | ---------------------------------------------------------- |
+| `--pack`                    | `-p`  | Path to .pck file                                          |
+| `--action`                  | `-a`  | Action: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r` |
+| `--output`                  | `-o`  | Output directory for extraction                            |
+| `--file`                    | `-f`  | Files to add (comma-separated or multiple flags)           |
+| `--remove-prefix`           |       | Prefix to remove from file paths                           |
+| `--command-file`            |       | JSON file with bulk commands                               |
+| `--set-godot-version`       |       | Set Godot version for new pck (e.g., `4.2.0`)              |
+| `--min-size-filter`         |       | Minimum file size filter                                   |
+| `--max-size-filter`         |       | Maximum file size filter                                   |
+| `--include-regex-filter`    | `-i`  | Include files matching regex                               |
+| `--exclude-regex-filter`    | `-e`  | Exclude files matching regex                               |
+| `--include-override-filter` |       | Override other filters for matching files                  |
+| `--print-hashes`            |       | Print MD5 hashes in list output                            |
+| `--quieter`                 | `-q`  | Reduce output verbosity                                    |
+| `--version`                 | `-v`  | Show version                                               |
+| `--help`                    | `-h`  | Show help                                                  |
 
-```sh
-godotpcktool NewPack.pck -a a -
+## 🏗️ Building
+
+### Requirements
+
+- Rust 1.70+ (install via [rustup](https://rustup.rs/))
+
+### Build Commands
+
+```bash
+# Debug build
+cargo build
+
+# Release build (optimized)
+cargo build --release
+
+# Run tests
+cargo test
+
+# Format code
+cargo fmt
+
+# Lint
+cargo clippy
 ```
 
-When starting the above command, the tool will read all lines from stdin until it is closed. At that point the input JSON is 
-parsed. As stdin needs to be closed for the tool to continue this is not meant for interactive use, but only for scripting. See the above section about the JSON command files for a version usable on the command line.
+### Cross-compilation
 
-See above for the format of the accepted JSON as it is the same as the JSON command file format.
+```bash
+# Windows (from Linux)
+rustup target add x86_64-pc-windows-gnu
+cargo build --release --target x86_64-pc-windows-gnu
 
-### General info
-
-In the long form multiple files may be included like this:
-```sh
-godotpcktool ... --file firstfile,secondfile
+# Linux musl (static binary)
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
 ```
 
-Make sure to use quoting if your files contain spaces, otherwise the
-files will be interpreted as other options.
+## 📁 Project Structure
 
-In the short form the files can just be listed after the other
-commands. If your file begins with a `-` you can prevent it from being
-interpreted as a parameter by adding `--` between the parameters and
-the list of files.
-
-
-Building
---------
-
-These are instructions for building this on Fedora, including cross
-compiling to Windows.
-
-Note that native Linux build uses the glibc of the currently installed
-system, which may be too new for older distros. For a build that
-supports those, see the section about podman builds.
-
-### Required libraries
-
-```sh
-sudo dnf install cmake gcc-c++ libstdc++-static mingw32-gcc-c++ mingw32-winpthreads-static
+```
+GodotPckTool/
+├── Cargo.toml          # Workspace manifest
+├── cli/                # CLI application
+│   ├── Cargo.toml
+│   └── src/
+│       └── main.rs
+├── pck/                # Core library
+│   ├── Cargo.toml
+│   └── src/
+│       ├── lib.rs      # PCK read/parse logic
+│       └── write.rs    # PCK write logic
+├── Dockerfile
+└── README.md
 ```
 
-Also don't forget to init git submodules.
+## ⚠️ Limitations
 
-```sh
-git submodule init
-git submodule update
-```
+- **Encrypted PCK files**: Detection only - decryption not supported
+- **Sparse bundles**: Warning displayed, may not work correctly
 
-Then just:
-```sh
-make
-```
+## 📄 License
 
-Also if you want to make a folder with the executables and cross compile:
-
-```sh
-make all-install
-```
-
-### Podman build
-
-Podman can be used to build a Linux binary using the oldest supported
-Ubuntu LTS. This ensures widest compatibility of the resulting binary.
-
-First make sure podman and make are installed, then run the make
-target:
-```sh
-make compile-podman
-```
-
-Due to the use of C++ 17 and non-ancient cmake version, the oldest
-working Ubuntu LTS is currently 22.04 (as 20.04 has ended support).
+MIT License - see [LICENSE](LICENSE) file.
