@@ -83,7 +83,8 @@ fn run() -> i32 {
         return 0;
     }
 
-    let (godot_major, godot_minor, godot_patch) = match parse_godot_version(&args.set_godot_version) {
+    let (godot_major, godot_minor, godot_patch) = match parse_godot_version(&args.set_godot_version)
+    {
         Ok(v) => v,
         Err(message) => {
             println!("ERROR: specified version number is invalid: {message}");
@@ -241,7 +242,13 @@ fn run() -> i32 {
 
     match args.action.as_str() {
         "list" | "l" => list_action(&pack, &filter, args.print_hashes, encryption_key),
-        "extract" | "e" => extract_action(&pack, &filter, args.output.as_ref(), !args.quieter, encryption_key),
+        "extract" | "e" => extract_action(
+            &pack,
+            &filter,
+            args.output.as_ref(),
+            !args.quieter,
+            encryption_key,
+        ),
         "repack" | "r" => repack_action(&pack, &filter, &file_entries, encryption_key),
         "add" | "a" => add_action(
             &pack,

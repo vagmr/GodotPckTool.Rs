@@ -4,11 +4,10 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use crate::{FileFilter, GodotVersion, PckFile, GODOT_RES_PATH, PCK_FILE_RELATIVE_BASE};
 use anyhow::{bail, Context, Result};
 use md5::{Digest, Md5};
 use walkdir::WalkDir;
-use crate::{FileFilter, GodotVersion, PckFile, GODOT_RES_PATH, PCK_FILE_RELATIVE_BASE};
-
 
 const MAX_SUPPORTED_PCK_VERSION_SAVE: u32 = 3;
 
@@ -64,7 +63,11 @@ impl PckBuilder {
             original_flags: 0,
         };
 
-        builder.set_godot_version(godot_version.major, godot_version.minor, godot_version.patch);
+        builder.set_godot_version(
+            godot_version.major,
+            godot_version.minor,
+            godot_version.patch,
+        );
         builder
     }
 
@@ -111,7 +114,11 @@ impl PckBuilder {
     }
 
     pub fn set_godot_version(&mut self, major: u32, minor: u32, patch: u32) {
-        self.godot_version = GodotVersion { major, minor, patch };
+        self.godot_version = GodotVersion {
+            major,
+            minor,
+            patch,
+        };
 
         if major <= 3 {
             self.format_version = 1;
@@ -195,7 +202,11 @@ impl PckBuilder {
 
         if root_path.is_file() {
             let (pck_path, is_removal) = prepare_pck_path_versioned(root, strip_prefix, version);
-            let flags = if is_removal { crate::PCK_FILE_DELETED } else { 0 };
+            let flags = if is_removal {
+                crate::PCK_FILE_DELETED
+            } else {
+                0
+            };
             if self.add_single_file_with_flags(&root_path, pck_path.clone(), flags, filter)? {
                 added.push((root.to_string(), pck_path));
             }
@@ -214,8 +225,13 @@ impl PckBuilder {
 
             let fs_path = entry.path();
             let fs_path_string = fs_path.to_string_lossy();
-            let (pck_path, is_removal) = prepare_pck_path_versioned(&fs_path_string, strip_prefix, version);
-            let flags = if is_removal { crate::PCK_FILE_DELETED } else { 0 };
+            let (pck_path, is_removal) =
+                prepare_pck_path_versioned(&fs_path_string, strip_prefix, version);
+            let flags = if is_removal {
+                crate::PCK_FILE_DELETED
+            } else {
+                0
+            };
 
             if self.add_single_file_with_flags(fs_path, pck_path.clone(), flags, filter)? {
                 added.push((fs_path_string.to_string(), pck_path));
@@ -241,8 +257,8 @@ impl PckBuilder {
         let mut out = File::create(&tmp_write)
             .with_context(|| format!("file is unwritable: {}", tmp_write.display()))?;
 
-        let use_relative_offset = (self.original_flags & PCK_FILE_RELATIVE_BASE != 0)
-            || self.format_version >= 3;
+        let use_relative_offset =
+            (self.original_flags & PCK_FILE_RELATIVE_BASE != 0) || self.format_version >= 3;
 
         write_u32_le(&mut out, crate::PCK_HEADER_MAGIC)?;
         write_u32_le(&mut out, self.format_version)?;
@@ -295,7 +311,10 @@ impl PckBuilder {
             let to_write_size = path_bytes.len() + (pad - (path_bytes.len() % pad));
             let padding = to_write_size - path_bytes.len();
 
-            write_u32_le(&mut out, u32::try_from(to_write_size).context("path too long")?)?;
+            write_u32_le(
+                &mut out,
+                u32::try_from(to_write_size).context("path too long")?,
+            )?;
             out.write_all(path_bytes)?;
             for _ in 0..padding {
                 out.write_all(&[0])?;
@@ -323,15 +342,18 @@ impl PckBuilder {
         }
 
         let mut source_reader: Option<File> = None;
-        if self.entries.values().any(|e| matches!(e.source, EntrySource::ExistingPck { .. })) {
+        if self
+            .entries
+            .values()
+            .any(|e| matches!(e.source, EntrySource::ExistingPck { .. }))
+        {
             let source_path = self
                 .source_pck_path
                 .as_ref()
                 .context("missing source pck path for repack")?;
-            source_reader = Some(
-                File::open(source_path)
-                    .with_context(|| format!("opening pck file for repacking: {}", source_path.display()))?,
-            );
+            source_reader = Some(File::open(source_path).with_context(|| {
+                format!("opening pck file for repacking: {}", source_path.display())
+            })?);
         }
 
         let mut computed_md5: BTreeMap<String, [u8; 16]> = BTreeMap::new();
@@ -386,7 +408,9 @@ impl PckBuilder {
 
                     let mut hasher = Md5::new();
                     let copied = copy_with_hash(&mut reader, &mut out, entry.size, &mut hasher)
-                        .with_context(|| format!("copying filesystem file: {}", fs_path.display()))?;
+                        .with_context(|| {
+                            format!("copying filesystem file: {}", fs_path.display())
+                        })?;
 
                     let md5 = hasher.finalize();
                     let mut md5_bytes = [0u8; 16];

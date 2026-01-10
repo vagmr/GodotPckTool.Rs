@@ -3,13 +3,13 @@
 //! Godot 4 uses AES-256-CFB mode for encrypting PCK files.
 //! Each encrypted block has a 40-byte header: MD5(16) + original_size(8) + IV(16)
 
-use aes::Aes256;
 use aes::cipher::{AsyncStreamCipher, BlockDecryptMut, BlockSizeUser};
-use cfb_mode::Decryptor;
+use aes::Aes256;
+use anyhow::{bail, Result};
 use cfb_mode::cipher::KeyIvInit;
-use anyhow::{Result, bail};
+use cfb_mode::Decryptor;
+use md5::{Digest, Md5};
 use std::io::{Read, Write};
-use md5::{Md5, Digest};
 
 type Aes256CfbDec = Decryptor<Aes256>;
 
@@ -97,7 +97,7 @@ pub fn align_to_16(size: u64) -> u64 {
 /// # Returns
 /// `true` if MD5 matches, `false` otherwise
 pub fn verify_md5(data: &[u8], expected_md5: &[u8; 16]) -> bool {
-    use md5::{Md5, Digest};
+    use md5::{Digest, Md5};
     let mut hasher = Md5::new();
     hasher.update(data);
     let result = hasher.finalize();
@@ -120,11 +120,11 @@ pub fn decrypt_block(data: &[u8], key: &[u8; 32]) -> Result<Vec<u8>> {
 
     // Parse header
     let header = EncryptedHeader::parse(&data[..ENCRYPTED_HEADER_SIZE])?;
-    
+
     // Calculate encrypted data size (aligned to 16 bytes)
     let encrypted_size = align_to_16(header.original_size) as usize;
     let total_size = ENCRYPTED_HEADER_SIZE + encrypted_size;
-    
+
     if data.len() < total_size {
         bail!(
             "Encrypted block data too short: expected {} bytes, got {}",
@@ -256,7 +256,7 @@ impl StreamingDecryptor {
             }
             total_read += n;
         }
-        
+
         if total_read == 0 {
             return Ok(0);
         }
@@ -272,7 +272,7 @@ impl StreamingDecryptor {
                 self.decryptor.decrypt_block_mut(chunk.into());
             }
         }
-        
+
         // Handle remaining bytes (partial block at the end)
         let remaining = total_read % block_size;
         if remaining > 0 {
@@ -334,11 +334,13 @@ impl StreamingDecryptor {
     }
 
     /// Get the number of bytes written so far.
+    #[allow(dead_code)]
     pub fn bytes_written(&self) -> u64 {
         self.bytes_written
     }
 
     /// Check if decryption is complete.
+    #[allow(dead_code)]
     pub fn is_complete(&self) -> bool {
         self.bytes_written >= self.original_size
     }

@@ -29,8 +29,9 @@ pub const GODOT_EXTRACT_USER_DIR: &str = "@@user@@";
 pub const GODOT_REMOVAL_TAG: &str = ".@@removal@@";
 
 mod write;
-pub use write::{prepare_pck_path, prepare_pck_path_versioned, BuildEntry, EntrySource, PckBuilder};
-
+pub use write::{
+    prepare_pck_path, prepare_pck_path_versioned, BuildEntry, EntrySource, PckBuilder,
+};
 
 #[derive(Debug, Clone)]
 pub struct FileFilter {
@@ -208,7 +209,6 @@ impl PckFile {
         filter: Option<&FileFilter>,
         encryption_key: Option<[u8; 32]>,
     ) -> Result<Self> {
-
         let path = path.as_ref().to_path_buf();
 
         let mut file = File::open(&path)
@@ -335,7 +335,9 @@ impl PckFile {
                 if let Some(ref mut cursor) = index_cursor {
                     let path_length = read_u32_le(cursor).context("reading path length")? as usize;
                     let mut path_bytes = vec![0u8; path_length];
-                    cursor.read_exact(&mut path_bytes).context("reading path bytes")?;
+                    cursor
+                        .read_exact(&mut path_bytes)
+                        .context("reading path bytes")?;
 
                     let rel_offset = read_u64_le(cursor).context("reading entry offset")?;
                     let size = read_u64_le(cursor).context("reading entry size")?;
@@ -350,9 +352,11 @@ impl PckFile {
 
                     (path_length, path_bytes, rel_offset, size, md5, entry_flags)
                 } else {
-                    let path_length = read_u32_le(&mut file).context("reading path length")? as usize;
+                    let path_length =
+                        read_u32_le(&mut file).context("reading path length")? as usize;
                     let mut path_bytes = vec![0u8; path_length];
-                    file.read_exact(&mut path_bytes).context("reading path bytes")?;
+                    file.read_exact(&mut path_bytes)
+                        .context("reading path bytes")?;
 
                     let rel_offset = read_u64_le(&mut file).context("reading entry offset")?;
                     let size = read_u64_le(&mut file).context("reading entry size")?;
@@ -503,7 +507,12 @@ impl PckFile {
                 } else {
                     ""
                 };
-                println!("Extracting{} {} to {}", encrypted_note, entry.path, target_file.display());
+                println!(
+                    "Extracting{} {} to {}",
+                    encrypted_note,
+                    entry.path,
+                    target_file.display()
+                );
             }
 
             if let Some(parent) = target_file.parent() {
@@ -528,7 +537,8 @@ impl PckFile {
 
                 // Read encrypted header (40 bytes)
                 let mut header_buf = [0u8; crypto::ENCRYPTED_HEADER_SIZE];
-                reader.read_exact(&mut header_buf)
+                reader
+                    .read_exact(&mut header_buf)
                     .with_context(|| format!("reading encrypted header for {}", entry.path))?;
 
                 let enc_header = crypto::EncryptedHeader::parse(&header_buf)
@@ -546,12 +556,15 @@ impl PckFile {
                 }
 
                 // Use streaming decryption to avoid loading entire file into memory
-                let mut decryptor = crypto::StreamingDecryptor::new(key, &enc_header.iv, original_size);
-                decryptor.decrypt_all(&mut reader, &mut writer)
+                let mut decryptor =
+                    crypto::StreamingDecryptor::new(key, &enc_header.iv, original_size);
+                decryptor
+                    .decrypt_all(&mut reader, &mut writer)
                     .with_context(|| format!("streaming decrypt for {}", entry.path))?;
 
                 // Verify MD5
-                decryptor.verify_md5(&enc_header.md5)
+                decryptor
+                    .verify_md5(&enc_header.md5)
                     .with_context(|| format!("MD5 verification failed for {}", entry.path))?;
             } else {
                 // Non-encrypted file: copy directly
@@ -623,12 +636,16 @@ fn detect_embedded_pck<R: Read + Seek>(reader: &mut R) -> Result<(u64, u64, bool
     let file_length = reader.seek(SeekFrom::End(0)).context("seeking to end")?;
 
     // Try reading magic at the start
-    reader.seek(SeekFrom::Start(0)).context("seeking to start")?;
+    reader
+        .seek(SeekFrom::Start(0))
+        .context("seeking to start")?;
     let magic = read_u32_le(reader).context("reading magic at start")?;
 
     if magic == PCK_HEADER_MAGIC {
         // Standalone PCK file
-        reader.seek(SeekFrom::Start(0)).context("seeking back to start")?;
+        reader
+            .seek(SeekFrom::Start(0))
+            .context("seeking back to start")?;
         return Ok((0, file_length, false));
     }
 
