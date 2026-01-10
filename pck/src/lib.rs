@@ -164,6 +164,12 @@ pub struct PckFile {
     excluded_by_filter: usize,
     /// Encryption key for encrypted PCK files (32 bytes)
     encryption_key: Option<[u8; 32]>,
+    /// Whether this PCK is embedded in an executable
+    embedded: bool,
+    /// Start offset of the PCK data within the file (0 for standalone PCK)
+    pck_start: u64,
+    /// End offset of the PCK data within the file
+    pck_end: u64,
 }
 
 impl PckFile {
@@ -174,6 +180,21 @@ impl PckFile {
     /// Check if this PCK file is encrypted
     pub fn is_encrypted(&self) -> bool {
         self.header.flags & PACK_DIR_ENCRYPTED != 0
+    }
+
+    /// Check if this PCK is embedded in an executable
+    pub fn is_embedded(&self) -> bool {
+        self.embedded
+    }
+
+    /// Get the start offset of the PCK data within the file
+    pub fn pck_start(&self) -> u64 {
+        self.pck_start
+    }
+
+    /// Get the end offset of the PCK data within the file
+    pub fn pck_end(&self) -> u64 {
+        self.pck_end
     }
 
     /// Load a PCK file with optional encryption key
@@ -193,9 +214,12 @@ impl PckFile {
         let mut file = File::open(&path)
             .with_context(|| format!("opening pck file for reading: {}", path.display()))?;
 
-        let pck_start = file
-            .seek(SeekFrom::Current(0))
-            .context("reading start offset")?;
+        // Detect embedded PCK or standalone PCK
+        let (pck_start, pck_end, embedded) = detect_embedded_pck(&mut file)?;
+
+        // Seek to PCK start and read magic
+        file.seek(SeekFrom::Start(pck_start))
+            .context("seeking to pck start")?;
 
         let magic = read_u32_le(&mut file).context("reading magic")?;
         if magic != PCK_HEADER_MAGIC {
@@ -390,6 +414,9 @@ impl PckFile {
             entries,
             excluded_by_filter,
             encryption_key,
+            embedded,
+            pck_start,
+            pck_end,
         })
     }
 
@@ -507,44 +534,25 @@ impl PckFile {
                 let enc_header = crypto::EncryptedHeader::parse(&header_buf)
                     .with_context(|| format!("parsing encrypted header for {}", entry.path))?;
 
-                // Read encrypted data (aligned to 16 bytes)
-                let encrypted_size = crypto::align_to_16(enc_header.original_size) as usize;
-                let mut encrypted_data = vec![0u8; encrypted_size];
-                reader.read_exact(&mut encrypted_data)
-                    .with_context(|| format!("reading encrypted data for {}", entry.path))?;
-
-                // Decrypt
-                let decrypted = crypto::decrypt_cfb(&encrypted_data, key, &enc_header.iv);
-
-                // Truncate to original size
-                let original_size = usize::try_from(enc_header.original_size)
-                    .with_context(|| format!("encrypted file original size too large for {}", entry.path))?;
-                if original_size != usize::try_from(entry.size).unwrap_or(usize::MAX) {
+                // Validate size consistency
+                let original_size = enc_header.original_size;
+                if original_size != entry.size {
                     bail!(
                         "Encrypted file size mismatch for {} (index size: {}, block header size: {})",
                         entry.path,
                         entry.size,
-                        enc_header.original_size
+                        original_size
                     );
                 }
-                if original_size > decrypted.len() {
-                    bail!(
-                        "Encrypted file original size is larger than decrypted buffer for {}: {} > {}",
-                        entry.path,
-                        original_size,
-                        decrypted.len()
-                    );
-                }
-                let decrypted_data = &decrypted[..original_size];
+
+                // Use streaming decryption to avoid loading entire file into memory
+                let mut decryptor = crypto::StreamingDecryptor::new(key, &enc_header.iv, original_size);
+                decryptor.decrypt_all(&mut reader, &mut writer)
+                    .with_context(|| format!("streaming decrypt for {}", entry.path))?;
 
                 // Verify MD5
-                if !crypto::verify_md5(decrypted_data, &enc_header.md5) {
-                    bail!("Invalid encryption key (MD5 mismatch on file {})", entry.path);
-                }
-
-                // Write decrypted data
-                writer.write_all(decrypted_data)
-                    .with_context(|| format!("writing decrypted data for {}", entry.path))?;
+                decryptor.verify_md5(&enc_header.md5)
+                    .with_context(|| format!("MD5 verification failed for {}", entry.path))?;
             } else {
                 // Non-encrypted file: copy directly
                 reader
@@ -598,6 +606,85 @@ fn read_u64_le<R: Read>(reader: &mut R) -> std::io::Result<u64> {
     let mut buf = [0u8; 8];
     reader.read_exact(&mut buf)?;
     Ok(u64::from_le_bytes(buf))
+}
+
+/// Detect if a file contains an embedded PCK (e.g., self-contained executable).
+///
+/// Returns (pck_start, pck_end, is_embedded):
+/// - For standalone PCK: (0, file_length, false)
+/// - For embedded PCK: (pck_start_offset, pck_end_offset, true)
+///
+/// The detection algorithm:
+/// 1. Try reading magic at file start
+/// 2. If not found, check file end for magic (embedded PCK marker)
+/// 3. If found at end, read the PCK size and locate the actual PCK start
+fn detect_embedded_pck<R: Read + Seek>(reader: &mut R) -> Result<(u64, u64, bool)> {
+    // Get file length
+    let file_length = reader.seek(SeekFrom::End(0)).context("seeking to end")?;
+
+    // Try reading magic at the start
+    reader.seek(SeekFrom::Start(0)).context("seeking to start")?;
+    let magic = read_u32_le(reader).context("reading magic at start")?;
+
+    if magic == PCK_HEADER_MAGIC {
+        // Standalone PCK file
+        reader.seek(SeekFrom::Start(0)).context("seeking back to start")?;
+        return Ok((0, file_length, false));
+    }
+
+    // Not a standalone PCK, check for embedded PCK at file end
+    // Embedded PCK format at end of file:
+    // ... [PCK data] [8-byte PCK size] [4-byte magic "GDPC"]
+    // Total trailer: 12 bytes
+
+    if file_length < 12 {
+        bail!("File too small to contain embedded PCK");
+    }
+
+    // Read magic at end (last 4 bytes)
+    reader
+        .seek(SeekFrom::End(-4))
+        .context("seeking to end magic")?;
+    let end_magic = read_u32_le(reader).context("reading end magic")?;
+
+    if end_magic != PCK_HEADER_MAGIC {
+        bail!("Not a Godot PCK file (no magic at start or end)");
+    }
+
+    // Read PCK size (8 bytes before the end magic)
+    reader
+        .seek(SeekFrom::End(-12))
+        .context("seeking to pck size")?;
+    let pck_size = read_u64_le(reader).context("reading embedded pck size")?;
+
+    // Calculate PCK start position
+    // pck_size is the size of the PCK data (excluding the 12-byte trailer)
+    // PCK starts at: file_length - 12 - pck_size
+    let pck_end = file_length - 12; // End of PCK data (before trailer)
+
+    let pck_start = pck_end
+        .checked_sub(pck_size)
+        .context("embedded pck size larger than file")?;
+
+    // Verify magic at calculated PCK start
+    reader
+        .seek(SeekFrom::Start(pck_start))
+        .context("seeking to embedded pck start")?;
+    let start_magic = read_u32_le(reader).context("reading embedded pck magic")?;
+
+    if start_magic != PCK_HEADER_MAGIC {
+        bail!(
+            "Invalid embedded PCK: magic not found at calculated start position (offset {})",
+            pck_start
+        );
+    }
+
+    // Seek back to PCK start for subsequent reading
+    reader
+        .seek(SeekFrom::Start(pck_start))
+        .context("seeking back to pck start")?;
+
+    Ok((pck_start, pck_end, true))
 }
 
 #[cfg(test)]

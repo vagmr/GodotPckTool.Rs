@@ -4,10 +4,12 @@
 //! Each encrypted block has a 40-byte header: MD5(16) + original_size(8) + IV(16)
 
 use aes::Aes256;
-use aes::cipher::AsyncStreamCipher;
+use aes::cipher::{AsyncStreamCipher, BlockDecryptMut, BlockSizeUser};
 use cfb_mode::Decryptor;
 use cfb_mode::cipher::KeyIvInit;
 use anyhow::{Result, bail};
+use std::io::{Read, Write};
+use md5::{Md5, Digest};
 
 type Aes256CfbDec = Decryptor<Aes256>;
 
@@ -170,6 +172,176 @@ pub fn parse_hex_key(hex: &str) -> Result<[u8; 32]> {
             .map_err(|_| anyhow::anyhow!("Invalid hex character in encryption key"))?;
     }
     Ok(key)
+}
+
+/// Default chunk size for streaming decryption (64 KB)
+pub const DEFAULT_CHUNK_SIZE: usize = 64 * 1024;
+
+/// Streaming decryptor for large encrypted files.
+///
+/// This allows decrypting files in chunks without loading the entire
+/// encrypted content into memory. It also computes MD5 incrementally.
+///
+/// # Example
+/// ```ignore
+/// let mut decryptor = StreamingDecryptor::new(&key, &header.iv, header.original_size);
+/// while let Some(chunk) = decryptor.decrypt_chunk(&mut reader, &mut writer)? {
+///     // chunk written to writer
+/// }
+/// decryptor.verify_md5(&header.md5)?;
+/// ```
+pub struct StreamingDecryptor {
+    decryptor: Aes256CfbDec,
+    md5_hasher: Md5,
+    original_size: u64,
+    bytes_written: u64,
+    encrypted_size: u64,
+    bytes_read: u64,
+}
+
+impl StreamingDecryptor {
+    /// Create a new streaming decryptor.
+    ///
+    /// # Arguments
+    /// * `key` - 32-byte encryption key
+    /// * `iv` - 16-byte initialization vector
+    /// * `original_size` - Original (unencrypted) data size
+    pub fn new(key: &[u8; 32], iv: &[u8; 16], original_size: u64) -> Self {
+        Self {
+            decryptor: Aes256CfbDec::new(key.into(), iv.into()),
+            md5_hasher: Md5::new(),
+            original_size,
+            bytes_written: 0,
+            encrypted_size: align_to_16(original_size),
+            bytes_read: 0,
+        }
+    }
+
+    /// Decrypt a chunk of data from reader and write to writer.
+    ///
+    /// Returns the number of bytes written, or 0 if decryption is complete.
+    ///
+    /// # Arguments
+    /// * `reader` - Source of encrypted data
+    /// * `writer` - Destination for decrypted data
+    /// * `chunk_size` - Maximum bytes to process in this call (should be multiple of 16)
+    pub fn decrypt_chunk<R: Read, W: Write>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+        chunk_size: usize,
+    ) -> Result<usize> {
+        if self.bytes_written >= self.original_size {
+            return Ok(0);
+        }
+
+        // Calculate how much encrypted data to read (align to block size for efficiency)
+        let remaining_encrypted = self.encrypted_size - self.bytes_read;
+        let block_size = <Aes256CfbDec as BlockSizeUser>::block_size();
+        // Round chunk_size down to block boundary, but at least one block
+        let aligned_chunk = (chunk_size / block_size).max(1) * block_size;
+        let to_read = aligned_chunk.min(remaining_encrypted as usize);
+
+        if to_read == 0 {
+            return Ok(0);
+        }
+
+        // Read encrypted chunk
+        let mut buffer = vec![0u8; to_read];
+        let mut total_read = 0;
+        while total_read < to_read {
+            let n = reader.read(&mut buffer[total_read..])?;
+            if n == 0 {
+                break;
+            }
+            total_read += n;
+        }
+        
+        if total_read == 0 {
+            return Ok(0);
+        }
+        buffer.truncate(total_read);
+        self.bytes_read += total_read as u64;
+
+        // Decrypt in place using BlockDecryptMut
+        // Process full blocks
+        let full_blocks = total_read / block_size;
+        if full_blocks > 0 {
+            let full_block_bytes = full_blocks * block_size;
+            for chunk in buffer[..full_block_bytes].chunks_mut(block_size) {
+                self.decryptor.decrypt_block_mut(chunk.into());
+            }
+        }
+        
+        // Handle remaining bytes (partial block at the end)
+        let remaining = total_read % block_size;
+        if remaining > 0 {
+            let start = full_blocks * block_size;
+            // For partial blocks, we need to decrypt a full block and take what we need
+            let mut last_block = [0u8; 16]; // AES block size
+            last_block[..remaining].copy_from_slice(&buffer[start..]);
+            self.decryptor.decrypt_block_mut((&mut last_block).into());
+            buffer[start..].copy_from_slice(&last_block[..remaining]);
+        }
+
+        // Calculate how much of the decrypted data is actual content (not padding)
+        let remaining_original = self.original_size - self.bytes_written;
+        let to_write = (total_read as u64).min(remaining_original) as usize;
+
+        // Update MD5 and write
+        let output = &buffer[..to_write];
+        self.md5_hasher.update(output);
+        writer.write_all(output)?;
+        self.bytes_written += to_write as u64;
+
+        Ok(to_write)
+    }
+
+    /// Decrypt all remaining data from reader to writer.
+    ///
+    /// # Arguments
+    /// * `reader` - Source of encrypted data
+    /// * `writer` - Destination for decrypted data
+    pub fn decrypt_all<R: Read, W: Write>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<u64> {
+        let mut total = 0u64;
+        loop {
+            let written = self.decrypt_chunk(reader, writer, DEFAULT_CHUNK_SIZE)?;
+            if written == 0 {
+                break;
+            }
+            total += written as u64;
+        }
+        Ok(total)
+    }
+
+    /// Verify the MD5 hash of the decrypted data.
+    ///
+    /// This should be called after all data has been decrypted.
+    ///
+    /// # Arguments
+    /// * `expected_md5` - Expected MD5 hash from encrypted header
+    pub fn verify_md5(self, expected_md5: &[u8; 16]) -> Result<()> {
+        let result = self.md5_hasher.finalize();
+        if result.as_slice() == expected_md5 {
+            Ok(())
+        } else {
+            bail!("Invalid encryption key (MD5 mismatch)")
+        }
+    }
+
+    /// Get the number of bytes written so far.
+    pub fn bytes_written(&self) -> u64 {
+        self.bytes_written
+    }
+
+    /// Check if decryption is complete.
+    pub fn is_complete(&self) -> bool {
+        self.bytes_written >= self.original_size
+    }
 }
 
 #[cfg(test)]

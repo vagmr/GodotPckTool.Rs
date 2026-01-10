@@ -15,8 +15,13 @@ const MAX_SUPPORTED_PCK_VERSION_SAVE: u32 = 3;
 #[derive(Debug, Clone)]
 pub struct BuildEntry {
     pub path: String,
+    /// Original/plaintext file size (stored in index)
     pub size: u64,
+    /// Actual size in PCK file (for encrypted files: header + aligned ciphertext)
+    pub actual_size: u64,
     pub flags: u32,
+    /// Original MD5 from source PCK (for encrypted files, we preserve this)
+    pub original_md5: Option<[u8; 16]>,
     pub source: EntrySource,
 }
 
@@ -66,12 +71,22 @@ impl PckBuilder {
     pub fn from_loaded_pck(pck: &PckFile, output_path: impl AsRef<Path>) -> Self {
         let mut entries = BTreeMap::new();
         for e in pck.entries() {
+            // Calculate actual size for encrypted files
+            // Encrypted file format: header(40) + align16(plaintext_size)
+            let actual_size = if e.flags & crate::PCK_FILE_ENCRYPTED != 0 {
+                crate::ENCRYPTED_HEADER_SIZE as u64 + crate::crypto::align_to_16(e.size)
+            } else {
+                e.size
+            };
+
             entries.insert(
                 e.path.clone(),
                 BuildEntry {
                     path: e.path.clone(),
                     size: e.size,
+                    actual_size,
                     flags: e.flags,
+                    original_md5: Some(e.md5),
                     source: EntrySource::ExistingPck { offset: e.offset },
                 },
             );
@@ -150,7 +165,9 @@ impl PckBuilder {
             BuildEntry {
                 path: pck_path,
                 size,
+                actual_size: size, // For new files from filesystem, actual_size == size
                 flags,
+                original_md5: None, // Will be computed during write
                 source: EntrySource::Filesystem {
                     path: filesystem_path.to_path_buf(),
                 },
@@ -324,8 +341,9 @@ impl PckBuilder {
             pad_to_alignment(&mut out, alignment)?;
             let offset_abs = out.stream_position()?;
 
-            let mut hasher = Md5::new();
-            let copied = match &entry.source {
+            // For encrypted files from existing PCK, we preserve the original MD5
+            // and copy the actual (encrypted) size, not the plaintext size.
+            let (copied, md5_bytes) = match &entry.source {
                 EntrySource::ExistingPck { offset } => {
                     let reader = source_reader
                         .as_mut()
@@ -334,25 +352,61 @@ impl PckBuilder {
                         .seek(SeekFrom::Start(*offset))
                         .with_context(|| format!("seeking to entry offset for {path}"))?;
 
-                    copy_with_hash(reader, &mut out, entry.size, &mut hasher)
-                        .with_context(|| format!("copying entry data for {path}"))?
+                    // Use actual_size for copying (includes encryption header + aligned ciphertext)
+                    let copy_size = entry.actual_size;
+                    let mut hasher = Md5::new();
+                    let copied = copy_with_hash(reader, &mut out, copy_size, &mut hasher)
+                        .with_context(|| format!("copying entry data for {path}"))?;
+
+                    // For encrypted files, use the original MD5 from the index (plaintext hash)
+                    // For non-encrypted files, compute the MD5 from the copied data
+                    let md5_bytes = if let Some(orig_md5) = entry.original_md5 {
+                        orig_md5
+                    } else {
+                        let md5 = hasher.finalize();
+                        let mut bytes = [0u8; 16];
+                        bytes.copy_from_slice(&md5[..]);
+                        bytes
+                    };
+
+                    if copied != copy_size {
+                        bail!(
+                            "ExistingPck entry data source returned {} bytes, expected {} for {}",
+                            copied,
+                            copy_size,
+                            path
+                        );
+                    }
+
+                    (copied, md5_bytes)
                 }
                 EntrySource::Filesystem { path: fs_path } => {
                     let mut reader = File::open(fs_path)
                         .with_context(|| format!("opening for reading: {}", fs_path.display()))?;
 
-                    copy_with_hash(&mut reader, &mut out, entry.size, &mut hasher)
-                        .with_context(|| format!("copying filesystem file: {}", fs_path.display()))?
+                    let mut hasher = Md5::new();
+                    let copied = copy_with_hash(&mut reader, &mut out, entry.size, &mut hasher)
+                        .with_context(|| format!("copying filesystem file: {}", fs_path.display()))?;
+
+                    let md5 = hasher.finalize();
+                    let mut md5_bytes = [0u8; 16];
+                    md5_bytes.copy_from_slice(&md5[..]);
+
+                    if copied != entry.size {
+                        bail!(
+                            "Filesystem entry data source returned {} bytes, expected {} for {}",
+                            copied,
+                            entry.size,
+                            fs_path.display()
+                        );
+                    }
+
+                    (copied, md5_bytes)
                 }
             };
 
-            if copied != entry.size {
-                bail!("file entry data source returned different amount of data than the entry said its size is");
-            }
-
-            let md5 = hasher.finalize();
-            let mut md5_bytes = [0u8; 16];
-            md5_bytes.copy_from_slice(&md5[..]);
+            // Note: `copied` is the actual bytes written (may differ from entry.size for encrypted files)
+            let _ = copied; // suppress unused warning, validation done above
 
             let offset_to_store = if self.format_version < 2 {
                 offset_abs
