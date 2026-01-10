@@ -1,2 +1,29 @@
-/build*
-/install/
+# Build artifacts
+/target/
+/pck/target/
+/cli/target/
+
+# Git
+.git/
+.gitignore
+.gitmodules
+.github/
+
+# IDE & Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Documentation (not needed for build)
+README.md
+LICENSE
+*.md
+
+# Local development
+.snow/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
