@@ -1,0 +1,12 @@
+[package]
+name = "godotpcktool"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+godotpck = { path = "../pck" }
+regex.workspace = true
+serde_json.workspace = true

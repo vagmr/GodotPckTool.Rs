@@ -3,3 +3,6 @@
 /build-podman/
 /install/
 .idea
+.snow
+/rust/target/
+/rust/test_output/

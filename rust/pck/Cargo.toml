@@ -1,0 +1,10 @@
+[package]
+name = "godotpck"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+regex.workspace = true
+md-5.workspace = true
