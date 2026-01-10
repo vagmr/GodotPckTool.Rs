@@ -17,9 +17,12 @@ pub const PCK_FILE_RELATIVE_BASE: u32 = 1 << 1;
 pub const PCK_FILE_SPARSE_BUNDLE: u32 = 1 << 2;
 
 pub const MAX_SUPPORTED_PCK_VERSION_LOAD: u32 = 3;
-
 pub const GODOT_PCK_EXTENSION: &str = ".pck";
 pub const GODOT_RES_PATH: &str = "res://";
+
+mod write;
+pub use write::{prepare_pck_path, BuildEntry, EntrySource, PckBuilder};
+
 
 #[derive(Debug, Clone)]
 pub struct FileFilter {
@@ -152,9 +155,13 @@ pub struct PckFile {
     entries: BTreeMap<String, PckEntry>,
     excluded_by_filter: usize,
 }
-
 impl PckFile {
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     pub fn load(path: impl AsRef<Path>, filter: Option<&FileFilter>) -> Result<Self> {
+
         let path = path.as_ref().to_path_buf();
 
         let mut file = File::open(&path)
