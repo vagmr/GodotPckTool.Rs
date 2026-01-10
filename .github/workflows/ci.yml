@@ -1,0 +1,61 @@
+name: Continuous integration
+on: [push, pull_request]
+
+jobs:
+  linux:
+    runs-on: ubuntu-22.04
+    name: Linux (Release)
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qqq build-essential cmake ninja-build
+
+      - name: Build and install using CMake
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+          sudo cmake --build build --target install
+
+      - name: Run the compiled and installed binary (smoke test)
+        run: |
+          godotpcktool --help
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: godotpcktool-linux-x86_64-glibc2.31
+          path: build/src/godotpcktool
+
+  windows:
+    runs-on: ubuntu-22.04
+    name: Windows (MinGW, Release)
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -qqq build-essential cmake ninja-build gcc-mingw-w64 g++-mingw-w64
+
+      - name: Build and install using CMake
+        env:
+          CMAKE_GENERATOR: Ninja
+        run: |
+          cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
+          cmake --build build
+          sudo cmake --build build --target install
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: godotpcktool-windows-x86_64
+          path: build/src/godotpcktool.exe
