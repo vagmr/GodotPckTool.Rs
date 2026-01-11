@@ -31,6 +31,23 @@ A fast, cross-platform CLI tool for unpacking and packing Godot `.pck` files, re
 - **Auto-detect** embedded PCK in executables (self-contained games)
 - Extract PCK data from `.exe` or other executable formats
 - Supports both standalone `.pck` and embedded PCK files
+- **Rip**: Extract embedded PCK to standalone file
+- **Merge**: Embed standalone PCK into executable
+- **Remove**: Remove embedded PCK from executable
+- **Split**: Separate embedded PCK into EXE + PCK files
+
+### 🔄 Version Management ()
+
+- **Change Version**: Convert PCK between Godot versions (3.x ↔ 4.x ↔ 4.4+)
+- Automatic format version adjustment based on Godot version
+- Safe rewrite approach handles all offset rules correctly
+
+### 🔧 Patch/Overlay (Mod Support)
+
+- **Patch**: Create mod PCK by overlaying files onto base PCK
+- Automatically replaces existing files and adds new ones
+- Support for path prefix stripping and adding
+- Perfect for game modding workflows
 
 ### 🔑 Key Bruteforcer ()
 
@@ -172,6 +189,89 @@ godotpcktool encrypted.pck -a bf --exe game.exe --threads 8
 ```
 
 > **Note**: The bruteforcer scans the executable file byte-by-byte looking for valid 32-byte AES-256 keys. This can take a long time for large files. Progress is reported in real-time with ETA.
+
+### 📦 Embedded PCK Operations ()
+
+#### Rip - Extract Embedded PCK
+
+```bash
+# Extract embedded PCK from executable to standalone file
+godotpcktool game.exe -a rip -o game.pck
+
+# With encryption key (if PCK is encrypted)
+godotpcktool game.exe -a rip -o game.pck --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+#### Merge - Embed PCK into Executable
+
+```bash
+# Merge standalone PCK into executable
+godotpcktool game.pck -a merge --exe game.exe
+
+# With encryption key (if PCK is encrypted)
+godotpcktool game.pck -a merge --exe game.exe --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+> **Note**: The merge operation appends the PCK data to the end of the executable and writes a trailer for detection.
+
+#### Remove - Remove Embedded PCK
+
+```bash
+# Remove embedded PCK from executable (keeps only the EXE)
+godotpcktool game.exe -a remove
+
+# With encryption key (if PCK is encrypted)
+godotpcktool game.exe -a remove --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+#### Split - Separate EXE and PCK
+
+```bash
+# Split embedded executable into separate EXE and PCK files
+godotpcktool game.exe -a split -o output_game.exe
+
+# The PCK will be saved as output_game.pck automatically
+# With encryption key (if PCK is encrypted)
+godotpcktool game.exe -a split -o output_game.exe --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+> **Note**: Split creates two files: the clean executable and the standalone PCK file. The PCK filename is derived from the output path by changing the extension.
+
+### 🔄 Change PCK Version ()
+
+```bash
+# Change PCK from Godot 3 to Godot 4 (in-place)
+godotpcktool game.pck -a change-version --set-godot-version 4.0.0
+
+# Short form
+godotpcktool game.pck -a cv --set-godot-version 4.0.0
+
+# Change version and save to new file
+godotpcktool game.pck -a cv --set-godot-version 4.4.0 -o game_new.pck
+
+# With encryption key (if PCK is encrypted)
+godotpcktool game.pck -a cv --set-godot-version 4.0.0 --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+> **Note**: The change-version operation safely rewrites the PCK file to handle all version-specific offset rules correctly. Format version is automatically determined: Godot 3.x → v1, Godot 4.0-4.4 → v2, Godot 4.5+ → v3.
+
+### 🔧 Patch/Overlay (Create Mod PCK)
+
+```bash
+# Create a patched PCK by overlaying mod files onto a base game PCK
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched_game.pck
+
+# With prefix stripping (remove "mod_files" from paths)
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched.pck --remove-prefix mod_files
+
+# Add path prefix to mod files (e.g., put mods under res://mods/)
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched.pck --path-prefix mods/
+
+# With encryption key (if base PCK is encrypted)
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched.pck --encryption-key YOUR_KEY
+```
+
+> **Note**: The patch operation loads the base PCK, then overlays files from the patch directory. Files with the same path will replace the originals. New files are added to the PCK.
 
 ### Adding Content
 

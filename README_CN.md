@@ -31,6 +31,23 @@
 - **自动检测** 可执行文件中的嵌入式 PCK（自包含游戏）
 - 从 `.exe` 或其他可执行格式中提取 PCK 数据
 - 同时支持独立 `.pck` 文件和嵌入式 PCK
+- **Rip**: 从可执行文件中提取嵌入的 PCK 到独立文件
+- **Merge**: 将独立 PCK 合并嵌入到可执行文件中
+- **Remove**: 从可执行文件中移除嵌入的 PCK
+- **Split**: 将嵌入式 PCK 分离为独立的 EXE + PCK 文件
+
+### 🔄 版本管理（）
+
+- **修改版本**: 在 Godot 版本之间转换 PCK（3.x ↔ 4.x ↔ 4.4+）
+- 根据 Godot 版本自动调整格式版本
+- 安全的重写方式正确处理所有偏移规则
+
+### 🔧 补丁/覆盖（Mod 支持）
+
+- **Patch**: 通过将文件覆盖到基础 PCK 上创建 Mod PCK
+- 自动替换现有文件并添加新文件
+- 支持路径前缀剥离和添加
+- 完美适用于游戏 Mod 工作流
 
 ### 🔑 密钥暴力破解（）
 
@@ -172,6 +189,89 @@ godotpcktool encrypted.pck -a bf --exe game.exe --threads 8
 ```
 
 > **注意**: 暴力破解器逐字节扫描可执行文件，寻找有效的 32 字节 AES-256 密钥。对于大文件可能需要较长时间。进度会实时报告，包含预计剩余时间。
+
+### 📦 嵌入式 PCK 操作（）
+
+#### Rip - 提取嵌入式 PCK
+
+```bash
+# 从可执行文件中提取嵌入的 PCK 到独立文件
+godotpcktool game.exe -a rip -o game.pck
+
+# 如果 PCK 是加密的，需要提供密钥
+godotpcktool game.exe -a rip -o game.pck --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+#### Merge - 合并 PCK 到可执行文件
+
+```bash
+# 将独立 PCK 合并到可执行文件中
+godotpcktool game.pck -a merge --exe game.exe
+
+# 如果 PCK 是加密的，需要提供密钥
+godotpcktool game.pck -a merge --exe game.exe --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+> **注意**: 合并操作会将 PCK 数据追加到可执行文件末尾，并写入用于检测的尾部标记。
+
+#### Remove - 移除嵌入式 PCK
+
+```bash
+# 从可执行文件中移除嵌入的 PCK（只保留 EXE）
+godotpcktool game.exe -a remove
+
+# 如果 PCK 是加密的，需要提供密钥
+godotpcktool game.exe -a remove --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+#### Split - 分离 EXE 和 PCK
+
+```bash
+# 将嵌入式可执行文件分离为独立的 EXE 和 PCK 文件
+godotpcktool game.exe -a split -o output_game.exe
+
+# PCK 会自动保存为 output_game.pck
+# 如果 PCK 是加密的，需要提供密钥
+godotpcktool game.exe -a split -o output_game.exe --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+> **注意**: Split 会创建两个文件：干净的可执行文件和独立的 PCK 文件。PCK 文件名通过更改输出路径的扩展名自动生成。
+
+### 🔄 修改 PCK 版本（）
+
+```bash
+# 将 PCK 从 Godot 3 转换为 Godot 4（就地修改）
+godotpcktool game.pck -a change-version --set-godot-version 4.0.0
+
+# 简写形式
+godotpcktool game.pck -a cv --set-godot-version 4.0.0
+
+# 修改版本并保存到新文件
+godotpcktool game.pck -a cv --set-godot-version 4.4.0 -o game_new.pck
+
+# 如果 PCK 是加密的，需要提供密钥
+godotpcktool game.pck -a cv --set-godot-version 4.0.0 --encryption-key YOUR_64_HEX_CHAR_KEY
+```
+
+> **注意**: change-version 操作会安全地重写 PCK 文件，正确处理所有版本特定的偏移规则。格式版本自动确定：Godot 3.x → v1，Godot 4.0-4.4 → v2，Godot 4.5+ → v3。
+
+### 🔧 补丁/覆盖（创建 Mod PCK）
+
+```bash
+# 通过将 mod 文件覆盖到基础游戏 PCK 上来创建补丁 PCK
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched_game.pck
+
+# 带前缀剥离（从路径中移除 "mod_files"）
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched.pck --remove-prefix mod_files
+
+# 为 mod 文件添加路径前缀（例如，将 mods 放在 res://mods/ 下）
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched.pck --path-prefix mods/
+
+# 如果基础 PCK 是加密的，需要提供密钥
+godotpcktool -a patch --base-pck game.pck -f mod_files/ -o patched.pck --encryption-key YOUR_KEY
+```
+
+> **注意**: patch 操作会加载基础 PCK，然后覆盖补丁目录中的文件。路径相同的文件会替换原文件。新文件会被添加到 PCK 中。
 
 ### 添加内容
 

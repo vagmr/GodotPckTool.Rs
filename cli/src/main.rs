@@ -87,6 +87,14 @@ struct Args {
     #[arg(long = "threads")]
     threads: Option<usize>,
 
+    /// Base PCK file for patch operation (overlay files onto this PCK)
+    #[arg(long = "base-pck")]
+    base_pck: Option<PathBuf>,
+
+    /// Path prefix to add to patch files (e.g., "mods/")
+    #[arg(long = "path-prefix")]
+    path_prefix: Option<String>,
+
     #[arg(short = 'v', long = "version")]
     version: bool,
 
@@ -328,6 +336,26 @@ fn run() -> i32 {
             args.start_address,
             args.end_address,
             args.threads,
+        ),
+        "rip" => rip_action(&pack, args.output.as_ref(), encryption_key),
+        "merge" => merge_action(&pack, args.exe.as_ref(), encryption_key),
+        "remove" => remove_action(&pack, encryption_key),
+        "split" => split_action(&pack, args.output.as_ref(), encryption_key),
+        "change-version" | "cv" => change_version_action(
+            &pack,
+            args.output.as_ref(),
+            &requested_godot_version,
+            encryption_key,
+        ),
+        "patch" => patch_action(
+            args.base_pck.as_ref(),
+            &file_entries,
+            args.output.as_ref(),
+            args.remove_prefix.as_deref(),
+            args.path_prefix.as_deref(),
+            Some(&requested_godot_version),
+            encryption_key,
+            &filter,
         ),
         _ => {
             println!("ERROR: unknown action: {}", args.action);
@@ -691,6 +719,350 @@ fn bruteforce_action(
         Err(e) => {
             println!();
             println!("ERROR: Bruteforce failed: {:#}", e);
+            2
+        }
+    }
+}
+
+fn rip_action(pack: &PathBuf, output: Option<&PathBuf>, encryption_key: Option<[u8; 32]>) -> i32 {
+    let output_path = match output {
+        Some(p) => p.clone(),
+        None => {
+            // Default: same name with .pck extension
+            let mut out = pack.clone();
+            out.set_extension("pck");
+            if out == *pack {
+                // If already .pck, add _ripped suffix
+                let stem = pack.file_stem().unwrap_or_default().to_string_lossy();
+                out.set_file_name(format!("{}_ripped.pck", stem));
+            }
+            out
+        }
+    };
+
+    if !pack.exists() {
+        println!("ERROR: specified file doesn't exist: {}", pack.display());
+        return 2;
+    }
+
+    println!("Ripping embedded PCK...");
+    println!("  Source: {}", pack.display());
+    println!("  Output: {}", output_path.display());
+
+    match godotpck_rs::rip_pck(pack, &output_path, encryption_key) {
+        Ok(result) => {
+            println!();
+            println!("Successfully extracted embedded PCK!");
+            println!("  PCK size: {} bytes", result.pck_size);
+            0
+        }
+        Err(e) => {
+            println!();
+            println!("ERROR: Rip failed: {:#}", e);
+            2
+        }
+    }
+}
+
+fn merge_action(
+    pck_path: &PathBuf,
+    exe_path: Option<&PathBuf>,
+    encryption_key: Option<[u8; 32]>,
+) -> i32 {
+    let exe_path = match exe_path {
+        Some(p) => p,
+        None => {
+            println!("ERROR: --exe is required for merge action");
+            return 1;
+        }
+    };
+
+    if !pck_path.exists() {
+        println!(
+            "ERROR: specified PCK file doesn't exist: {}",
+            pck_path.display()
+        );
+        return 2;
+    }
+
+    if !exe_path.exists() {
+        println!(
+            "ERROR: specified executable doesn't exist: {}",
+            exe_path.display()
+        );
+        return 2;
+    }
+
+    println!("Merging PCK into executable...");
+    println!("  PCK file: {}", pck_path.display());
+    println!("  Executable: {}", exe_path.display());
+
+    match godotpck_rs::merge_pck(pck_path, exe_path, encryption_key) {
+        Ok(result) => {
+            println!();
+            println!("Successfully merged PCK into executable!");
+            println!("  Output size: {} bytes", result.output_size);
+            println!("  PCK starts at: 0x{:x}", result.pck_start);
+            0
+        }
+        Err(e) => {
+            println!();
+            println!("ERROR: Merge failed: {:#}", e);
+            2
+        }
+    }
+}
+
+fn remove_action(exe_path: &PathBuf, encryption_key: Option<[u8; 32]>) -> i32 {
+    if !exe_path.exists() {
+        println!(
+            "ERROR: specified file doesn't exist: {}",
+            exe_path.display()
+        );
+        return 2;
+    }
+
+    println!("Removing embedded PCK from executable...");
+    println!("  File: {}", exe_path.display());
+
+    match godotpck_rs::remove_pck(exe_path, encryption_key) {
+        Ok(result) => {
+            println!();
+            println!("Successfully removed embedded PCK!");
+            println!("  New file size: {} bytes", result.exe_size);
+            println!("  Removed PCK size: {} bytes", result.removed_pck_size);
+            0
+        }
+        Err(e) => {
+            println!();
+            println!("ERROR: Remove failed: {:#}", e);
+            2
+        }
+    }
+}
+
+fn split_action(
+    exe_path: &PathBuf,
+    output: Option<&PathBuf>,
+    encryption_key: Option<[u8; 32]>,
+) -> i32 {
+    if !exe_path.exists() {
+        println!(
+            "ERROR: specified file doesn't exist: {}",
+            exe_path.display()
+        );
+        return 2;
+    }
+
+    // Determine output paths
+    let (output_exe, output_pck) = match output {
+        Some(p) => {
+            let mut pck = p.clone();
+            pck.set_extension("pck");
+            (Some(p.clone()), Some(pck))
+        }
+        None => (None, None),
+    };
+
+    println!("Splitting embedded PCK from executable...");
+    println!("  Source: {}", exe_path.display());
+    if let Some(ref exe) = output_exe {
+        println!("  Output EXE: {}", exe.display());
+    }
+    if let Some(ref pck) = output_pck {
+        println!("  Output PCK: {}", pck.display());
+    }
+
+    match godotpck_rs::split_pck(
+        exe_path,
+        output_exe.as_ref(),
+        output_pck.as_ref(),
+        encryption_key,
+    ) {
+        Ok(result) => {
+            println!();
+            println!("Successfully split embedded PCK!");
+            println!("  EXE size: {} bytes", result.exe_size);
+            println!("  PCK size: {} bytes", result.pck_size);
+            0
+        }
+        Err(e) => {
+            println!();
+            println!("ERROR: Split failed: {:#}", e);
+            2
+        }
+    }
+}
+
+fn change_version_action(
+    pck_path: &PathBuf,
+    output_path: Option<&PathBuf>,
+    new_version: &godotpck_rs::GodotVersion,
+    encryption_key: Option<[u8; 32]>,
+) -> i32 {
+    if !pck_path.exists() {
+        println!(
+            "ERROR: specified PCK file doesn't exist: {}",
+            pck_path.display()
+        );
+        return 2;
+    }
+
+    println!("Changing PCK version...");
+    println!("  Input: {}", pck_path.display());
+    println!(
+        "  Target version: {}.{}.{}",
+        new_version.major, new_version.minor, new_version.patch
+    );
+
+    if let Some(out) = output_path {
+        println!("  Output: {}", out.display());
+    } else {
+        println!("  Output: {} (in-place)", pck_path.display());
+    }
+
+    let output: Option<&std::path::Path> = output_path.map(|p| p.as_path());
+
+    match godotpck_rs::change_version(
+        pck_path,
+        (new_version.major, new_version.minor, new_version.patch),
+        output,
+        encryption_key,
+    ) {
+        Ok(result) => {
+            println!();
+            println!("Successfully changed PCK version!");
+            println!(
+                "  Version: {} -> {}",
+                result.old_version, result.new_version
+            );
+            println!(
+                "  Format: v{} -> v{}",
+                result.old_format_version, result.new_format_version
+            );
+            println!("  Files: {}", result.file_count);
+            0
+        }
+        Err(e) => {
+            println!();
+            println!("ERROR: Change version failed: {:#}", e);
+            2
+        }
+    }
+}
+
+fn patch_action(
+    base_pck: Option<&PathBuf>,
+    file_entries: &[FileEntry],
+    output_path: Option<&PathBuf>,
+    strip_prefix: Option<&str>,
+    path_prefix: Option<&str>,
+    godot_version: Option<&godotpck_rs::GodotVersion>,
+    encryption_key: Option<[u8; 32]>,
+    filter: &godotpck_rs::FileFilter,
+) -> i32 {
+    // Validate required arguments
+    let base_pck = match base_pck {
+        Some(p) => p,
+        None => {
+            println!("ERROR: --base-pck is required for patch action");
+            return 1;
+        }
+    };
+
+    if !base_pck.exists() {
+        println!("ERROR: Base PCK file doesn't exist: {}", base_pck.display());
+        return 2;
+    }
+
+    let output_path = match output_path {
+        Some(p) => p,
+        None => {
+            println!("ERROR: --output is required for patch action");
+            return 1;
+        }
+    };
+
+    // Get patch directory from file_entries (first entry)
+    let patch_dir = if file_entries.is_empty() {
+        println!(
+            "ERROR: No patch directory specified. Use -f <directory> to specify the patch files."
+        );
+        return 1;
+    } else {
+        PathBuf::from(&file_entries[0].input_file)
+    };
+
+    if !patch_dir.exists() {
+        println!(
+            "ERROR: Patch directory doesn't exist: {}",
+            patch_dir.display()
+        );
+        return 2;
+    }
+
+    if !patch_dir.is_dir() {
+        println!(
+            "ERROR: Patch path is not a directory: {}",
+            patch_dir.display()
+        );
+        return 2;
+    }
+
+    println!("Creating patched PCK...");
+    println!("  Base PCK: {}", base_pck.display());
+    println!("  Patch directory: {}", patch_dir.display());
+    println!("  Output: {}", output_path.display());
+
+    if let Some(prefix) = strip_prefix {
+        println!("  Strip prefix: {}", prefix);
+    }
+    if let Some(prefix) = path_prefix {
+        println!("  Path prefix: {}", prefix);
+    }
+
+    let version_tuple = godot_version.map(|v| (v.major, v.minor, v.patch));
+
+    match godotpck_rs::patch_pck(
+        base_pck,
+        &patch_dir,
+        output_path,
+        strip_prefix.unwrap_or(""),
+        path_prefix.unwrap_or(""),
+        version_tuple,
+        encryption_key,
+        Some(filter),
+    ) {
+        Ok(result) => {
+            println!();
+            println!("Successfully created patched PCK!");
+            println!("  Base files: {}", result.base_file_count);
+            println!("  Patch files: {}", result.patch_file_count);
+            println!("  Total files: {}", result.total_file_count);
+            println!("  Replaced: {}", result.replaced_files.len());
+            println!("  New: {}", result.new_files.len());
+
+            if !result.replaced_files.is_empty() {
+                println!();
+                println!("Replaced files:");
+                for f in &result.replaced_files {
+                    println!("  - {}", f);
+                }
+            }
+
+            if !result.new_files.is_empty() {
+                println!();
+                println!("New files:");
+                for f in &result.new_files {
+                    println!("  + {}", f);
+                }
+            }
+
+            0
+        }
+        Err(e) => {
+            println!();
+            println!("ERROR: Patch failed: {:#}", e);
             2
         }
     }

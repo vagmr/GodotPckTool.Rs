@@ -86,14 +86,14 @@ jobs:
       - name: Package artifact
         run: |
           cd target/release
-          tar -czvf godotpcktool-linux-x86_64.tar.gz godotpcktool
-          mv godotpcktool-linux-x86_64.tar.gz ../../
+          tar -czvf godotpcktool.Rs-linux-x86_64.tar.gz godotpcktool
+          mv godotpcktool.Rs-linux-x86_64.tar.gz ../../
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godotpcktool-linux-x86_64
-          path: godotpcktool-linux-x86_64.tar.gz
+          name: godotpcktool.Rs-linux-x86_64
+          path: godotpcktool.Rs-linux-x86_64.tar.gz
 
   build-windows:
     name: Build Windows
@@ -123,14 +123,14 @@ jobs:
       - name: Package artifact
         run: |
           cd target/release
-          Compress-Archive -Path godotpcktool.exe -DestinationPath godotpcktool-windows-x86_64.zip
-          Move-Item godotpcktool-windows-x86_64.zip ../../
+          Compress-Archive -Path godotpcktool.exe -DestinationPath godotpcktool.Rs-windows-x86_64.zip
+          Move-Item godotpcktool.Rs-windows-x86_64.zip ../../
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godotpcktool-windows-x86_64
-          path: godotpcktool-windows-x86_64.zip
+          name: godotpcktool.Rs-windows-x86_64
+          path: godotpcktool.Rs-windows-x86_64.zip
 
   build-macos:
     name: Build macOS
@@ -160,14 +160,14 @@ jobs:
       - name: Package artifact
         run: |
           cd target/release
-          tar -czvf godotpcktool-macos-x86_64.tar.gz godotpcktool
-          mv godotpcktool-macos-x86_64.tar.gz ../../
+          tar -czvf godotpcktool.Rs-macos-x86_64.tar.gz godotpcktool
+          mv godotpcktool.Rs-macos-x86_64.tar.gz ../../
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: godotpcktool-macos-x86_64
-          path: godotpcktool-macos-x86_64.tar.gz
+          name: godotpcktool.Rs-macos-x86_64
+          path: godotpcktool.Rs-macos-x86_64.tar.gz
 
   release:
     name: Create Release
@@ -215,20 +215,20 @@ jobs:
           # Append download section
           echo "" >> RELEASE_NOTES.md
           echo "### 📥 Downloads" >> RELEASE_NOTES.md
-          echo "- **Windows**: \`godotpcktool-windows-x86_64.zip\`" >> RELEASE_NOTES.md
-          echo "- **Linux**: \`godotpcktool-linux-x86_64.tar.gz\`" >> RELEASE_NOTES.md
-          echo "- **macOS**: \`godotpcktool-macos-x86_64.tar.gz\`" >> RELEASE_NOTES.md
+          echo "- **Windows**: \`godotpcktool.Rs-windows-x86_64.zip\`" >> RELEASE_NOTES.md
+          echo "- **Linux**: \`godotpcktool.Rs-linux-x86_64.tar.gz\`" >> RELEASE_NOTES.md
+          echo "- **macOS**: \`godotpcktool.Rs-macos-x86_64.tar.gz\`" >> RELEASE_NOTES.md
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          name: GodotPckTool ${{ steps.version.outputs.VERSION }}
+          name: GodotPckTool.Rs ${{ steps.version.outputs.VERSION }}
           body_path: RELEASE_NOTES.md
           draft: false
           prerelease: ${{ contains(github.ref, 'alpha') || contains(github.ref, 'beta') || contains(github.ref, 'rc') }}
           files: |
-            artifacts/godotpcktool-linux-x86_64/godotpcktool-linux-x86_64.tar.gz
-            artifacts/godotpcktool-windows-x86_64/godotpcktool-windows-x86_64.zip
-            artifacts/godotpcktool-macos-x86_64/godotpcktool-macos-x86_64.tar.gz
+            artifacts/godotpcktool.Rs-linux-x86_64/godotpcktool.Rs-linux-x86_64.tar.gz
+            artifacts/godotpcktool.Rs-windows-x86_64/godotpcktool.Rs-windows-x86_64.zip
+            artifacts/godotpcktool.Rs-macos-x86_64/godotpcktool.Rs-macos-x86_64.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

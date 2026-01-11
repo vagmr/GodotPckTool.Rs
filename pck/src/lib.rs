@@ -12,10 +12,14 @@ pub use crypto::{
     align_to_16, compute_md5, decrypt_cfb, encrypt_block, encrypt_cfb, generate_iv, parse_hex_key,
     verify_md5, EncryptedHeader, ENCRYPTED_HEADER_SIZE,
 };
-
 mod bruteforce;
 pub use bruteforce::{
     BruteforceConfig, BruteforceProgress, BruteforceResult, Bruteforcer, ProgressCallback,
+};
+mod embedded;
+pub use embedded::{
+    change_version, merge_pck, patch_pck, remove_pck, rip_pck, split_pck, ChangeVersionResult,
+    MergeResult, PatchResult, RemoveResult, RipResult, SplitResult,
 };
 
 pub const PCK_HEADER_MAGIC: u32 = 0x4350_4447;
