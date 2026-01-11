@@ -4,12 +4,42 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::{FileFilter, GodotVersion, PckFile, GODOT_RES_PATH, PCK_FILE_RELATIVE_BASE};
+use crate::{
+    FileFilter, GodotVersion, PckFile, GODOT_RES_PATH, PACK_DIR_ENCRYPTED, PCK_FILE_ENCRYPTED,
+    PCK_FILE_RELATIVE_BASE,
+};
 use anyhow::{bail, Context, Result};
 use md5::{Digest, Md5};
 use walkdir::WalkDir;
 
 const MAX_SUPPORTED_PCK_VERSION_SAVE: u32 = 3;
+
+/// Encryption settings for creating encrypted PCK files
+#[derive(Debug, Clone, Default)]
+pub struct EncryptionSettings {
+    /// 32-byte encryption key
+    pub key: Option<[u8; 32]>,
+    /// Whether to encrypt the index (file list)
+    pub encrypt_index: bool,
+    /// Whether to encrypt file contents
+    pub encrypt_files: bool,
+}
+
+impl EncryptionSettings {
+    /// Create new encryption settings with the given key
+    pub fn new(key: [u8; 32], encrypt_index: bool, encrypt_files: bool) -> Self {
+        Self {
+            key: Some(key),
+            encrypt_index,
+            encrypt_files,
+        }
+    }
+
+    /// Check if any encryption is enabled
+    pub fn is_enabled(&self) -> bool {
+        self.key.is_some() && (self.encrypt_index || self.encrypt_files)
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct BuildEntry {
@@ -44,6 +74,9 @@ pub struct PckBuilder {
     pad_paths_to_multiple_with_nulls: usize,
 
     original_flags: u32,
+
+    /// Encryption settings for creating encrypted PCK files
+    encryption: EncryptionSettings,
 }
 
 impl PckBuilder {
@@ -61,6 +94,8 @@ impl PckBuilder {
             pad_paths_to_multiple_with_nulls: 4,
 
             original_flags: 0,
+
+            encryption: EncryptionSettings::default(),
         };
 
         builder.set_godot_version(
@@ -110,7 +145,25 @@ impl PckBuilder {
             pad_paths_to_multiple_with_nulls: 4,
 
             original_flags: header.flags,
+
+            encryption: EncryptionSettings::default(),
         }
+    }
+
+    /// Set encryption settings for the PCK file
+    pub fn set_encryption(&mut self, encryption: EncryptionSettings) {
+        self.encryption = encryption;
+    }
+
+    /// Set encryption with key, index encryption, and file encryption options
+    pub fn with_encryption(
+        mut self,
+        key: [u8; 32],
+        encrypt_index: bool,
+        encrypt_files: bool,
+    ) -> Self {
+        self.encryption = EncryptionSettings::new(key, encrypt_index, encrypt_files);
+        self
     }
 
     pub fn set_godot_version(&mut self, major: u32, minor: u32, patch: u32) {
@@ -246,6 +299,11 @@ impl PckBuilder {
             bail!("cannot save pck version: {}", self.format_version);
         }
 
+        // Encryption requires format version >= 2
+        if self.encryption.is_enabled() && self.format_version < 2 {
+            bail!("Encryption requires PCK format version >= 2 (Godot 4+)");
+        }
+
         let mut alignment = self.alignment;
         if self.format_version >= 2 && alignment < 1 {
             alignment = 32;
@@ -275,6 +333,10 @@ impl PckBuilder {
             if use_relative_offset {
                 flags |= PCK_FILE_RELATIVE_BASE;
             }
+            // Set encryption flag if index encryption is enabled
+            if self.encryption.encrypt_index && self.encryption.key.is_some() {
+                flags |= PACK_DIR_ENCRYPTED;
+            }
             write_u32_le(&mut out, flags)?;
 
             base_offset_location = out.stream_position()?;
@@ -290,20 +352,18 @@ impl PckBuilder {
             write_u32_le(&mut out, 0)?;
         }
 
-        let remember = out.stream_position()?;
-        if self.format_version >= 3 {
-            out.seek(SeekFrom::Start(directory_offset_location))?;
-            write_u64_le(&mut out, remember)?;
-            out.seek(SeekFrom::Start(remember))?;
-        }
+        // For encrypted index, we need to build the index in memory first
+        let encrypt_index = self.encryption.encrypt_index && self.encryption.key.is_some();
+        let encrypt_files = self.encryption.encrypt_files && self.encryption.key.is_some();
 
-        write_u32_le(
-            &mut out,
-            u32::try_from(self.entries.len()).context("too many entries")?,
-        )?;
-
+        // Build index data
+        let mut index_data = Vec::new();
         let mut header_patch_points: BTreeMap<String, u64> = BTreeMap::new();
         let mut sizes: BTreeMap<String, u64> = BTreeMap::new();
+
+        // Write file count
+        let file_count = u32::try_from(self.entries.len()).context("too many entries")?;
+        index_data.extend_from_slice(&file_count.to_le_bytes());
 
         for (path, entry) in &self.entries {
             let path_bytes = path.as_bytes();
@@ -311,25 +371,56 @@ impl PckBuilder {
             let to_write_size = path_bytes.len() + (pad - (path_bytes.len() % pad));
             let padding = to_write_size - path_bytes.len();
 
-            write_u32_le(
-                &mut out,
-                u32::try_from(to_write_size).context("path too long")?,
-            )?;
-            out.write_all(path_bytes)?;
+            // Path length
+            index_data.extend_from_slice(
+                &u32::try_from(to_write_size)
+                    .context("path too long")?
+                    .to_le_bytes(),
+            );
+            // Path bytes
+            index_data.extend_from_slice(path_bytes);
+            // Padding
             for _ in 0..padding {
-                out.write_all(&[0])?;
+                index_data.push(0);
             }
 
-            header_patch_points.insert(path.clone(), out.stream_position()?);
-            write_u64_le(&mut out, 0)?;
-            write_u64_le(&mut out, entry.size)?;
-            out.write_all(&[0u8; 16])?;
+            // Record position for patching later (relative to index start)
+            header_patch_points.insert(path.clone(), index_data.len() as u64);
+
+            // Offset placeholder (8 bytes)
+            index_data.extend_from_slice(&[0u8; 8]);
+            // Size (8 bytes)
+            index_data.extend_from_slice(&entry.size.to_le_bytes());
+            // MD5 placeholder (16 bytes)
+            index_data.extend_from_slice(&[0u8; 16]);
 
             if self.format_version >= 2 {
-                write_u32_le(&mut out, entry.flags)?;
+                // Flags - add encryption flag if encrypting files
+                let mut file_flags = entry.flags;
+                if encrypt_files && matches!(entry.source, EntrySource::Filesystem { .. }) {
+                    file_flags |= PCK_FILE_ENCRYPTED;
+                }
+                index_data.extend_from_slice(&file_flags.to_le_bytes());
             }
 
             sizes.insert(path.clone(), entry.size);
+        }
+
+        // Write index (encrypted or plain)
+        let remember = out.stream_position()?;
+        if self.format_version >= 3 {
+            out.seek(SeekFrom::Start(directory_offset_location))?;
+            write_u64_le(&mut out, remember)?;
+            out.seek(SeekFrom::Start(remember))?;
+        }
+
+        let index_start_pos = out.stream_position()?;
+        if encrypt_index {
+            let key = self.encryption.key.as_ref().unwrap();
+            let encrypted_index = crate::crypto::encrypt_block(&index_data, key);
+            out.write_all(&encrypted_index)?;
+        } else {
+            out.write_all(&index_data)?;
         }
 
         pad_to_alignment(&mut out, alignment)?;
@@ -363,8 +454,6 @@ impl PckBuilder {
             pad_to_alignment(&mut out, alignment)?;
             let offset_abs = out.stream_position()?;
 
-            // For encrypted files from existing PCK, we preserve the original MD5
-            // and copy the actual (encrypted) size, not the plaintext size.
             let (copied, md5_bytes) = match &entry.source {
                 EntrySource::ExistingPck { offset } => {
                     let reader = source_reader
@@ -381,7 +470,6 @@ impl PckBuilder {
                         .with_context(|| format!("copying entry data for {path}"))?;
 
                     // For encrypted files, use the original MD5 from the index (plaintext hash)
-                    // For non-encrypted files, compute the MD5 from the copied data
                     let md5_bytes = if let Some(orig_md5) = entry.original_md5 {
                         orig_md5
                     } else {
@@ -403,34 +491,29 @@ impl PckBuilder {
                     (copied, md5_bytes)
                 }
                 EntrySource::Filesystem { path: fs_path } => {
-                    let mut reader = File::open(fs_path)
-                        .with_context(|| format!("opening for reading: {}", fs_path.display()))?;
+                    // Read file content
+                    let file_data = fs::read(fs_path)
+                        .with_context(|| format!("reading file: {}", fs_path.display()))?;
 
-                    let mut hasher = Md5::new();
-                    let copied = copy_with_hash(&mut reader, &mut out, entry.size, &mut hasher)
-                        .with_context(|| {
-                            format!("copying filesystem file: {}", fs_path.display())
-                        })?;
+                    // Compute MD5 of plaintext
+                    let md5_bytes = crate::crypto::compute_md5(&file_data);
 
-                    let md5 = hasher.finalize();
-                    let mut md5_bytes = [0u8; 16];
-                    md5_bytes.copy_from_slice(&md5[..]);
-
-                    if copied != entry.size {
-                        bail!(
-                            "Filesystem entry data source returned {} bytes, expected {} for {}",
-                            copied,
-                            entry.size,
-                            fs_path.display()
-                        );
-                    }
+                    // Write data (encrypted or plain)
+                    let copied = if encrypt_files {
+                        let key = self.encryption.key.as_ref().unwrap();
+                        let encrypted = crate::crypto::encrypt_block(&file_data, key);
+                        out.write_all(&encrypted)?;
+                        encrypted.len() as u64
+                    } else {
+                        out.write_all(&file_data)?;
+                        file_data.len() as u64
+                    };
 
                     (copied, md5_bytes)
                 }
             };
 
-            // Note: `copied` is the actual bytes written (may differ from entry.size for encrypted files)
-            let _ = copied; // suppress unused warning, validation done above
+            let _ = copied; // suppress unused warning
 
             let offset_to_store = if self.format_version < 2 {
                 offset_abs
@@ -444,9 +527,8 @@ impl PckBuilder {
             computed_offsets.insert(path.clone(), offset_to_store);
         }
 
+        // Patch index with computed offsets and MD5s
         for (path, patch_pos) in &header_patch_points {
-            out.seek(SeekFrom::Start(*patch_pos))?;
-
             let offset = *computed_offsets
                 .get(path)
                 .with_context(|| format!("missing computed offset for {path}"))?;
@@ -457,9 +539,21 @@ impl PckBuilder {
                 .get(path)
                 .with_context(|| format!("missing md5 for {path}"))?;
 
-            write_u64_le(&mut out, offset)?;
-            write_u64_le(&mut out, size)?;
-            out.write_all(&md5)?;
+            // Patch in index_data buffer
+            let pos = *patch_pos as usize;
+            index_data[pos..pos + 8].copy_from_slice(&offset.to_le_bytes());
+            index_data[pos + 8..pos + 16].copy_from_slice(&size.to_le_bytes());
+            index_data[pos + 16..pos + 32].copy_from_slice(&md5);
+        }
+
+        // Re-write the index with patched data
+        out.seek(SeekFrom::Start(index_start_pos))?;
+        if encrypt_index {
+            let key = self.encryption.key.as_ref().unwrap();
+            let encrypted_index = crate::crypto::encrypt_block(&index_data, key);
+            out.write_all(&encrypted_index)?;
+        } else {
+            out.write_all(&index_data)?;
         }
 
         out.flush().context("flush writer")?;

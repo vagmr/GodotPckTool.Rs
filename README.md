@@ -20,10 +20,11 @@ A fast, cross-platform CLI tool for unpacking and packing Godot `.pck` files, re
 
 ### 🔐 Encryption Support ()
 
-- **AES-256-CFB decryption** for encrypted PCK files (Godot 4+)
+- **AES-256-CFB encryption/decryption** for encrypted PCK files (Godot 4+)
+- **Create encrypted PCK** with index and/or file encryption
 - Decrypt both **encrypted index** and **encrypted files**
 - **Streaming decryption** for memory-efficient large file handling
-- MD5 integrity verification during decryption
+- MD5 integrity verification during encryption/decryption
 
 ### 📦 Embedded PCK Support ()
 
@@ -117,6 +118,25 @@ godotpcktool encrypted_game.pck -a e -o extracted --key 0123456789abcdef01234567
 ```
 
 > **Note**: The encryption key is the same one configured in Godot's export presets under "Encryption" → "Encryption Key". It should be a 64-character hexadecimal string.
+
+### 🔐 Creating Encrypted PCK ()
+
+```bash
+# Create encrypted PCK with both index and file encryption
+godotpcktool encrypted.pck -a a files/ --remove-prefix files \
+  --encrypt-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --encrypt-index --encrypt-files
+
+# Encrypt only the file index (file list hidden, but files readable)
+godotpcktool encrypted.pck -a a files/ --remove-prefix files \
+  --encrypt-key YOUR_64_HEX_CHAR_KEY --encrypt-index
+
+# Encrypt only file contents (file list visible, but contents encrypted)
+godotpcktool encrypted.pck -a a files/ --remove-prefix files \
+  --encrypt-key YOUR_64_HEX_CHAR_KEY --encrypt-files
+```
+
+> **Note**: Encryption requires Godot 4+ PCK format (version >= 2). Use `--set-godot-version 4.0.0` or higher when creating new encrypted PCK files.
 
 ### 📦 Extracting from Embedded PCK ()
 
@@ -216,25 +236,28 @@ echo '[{"file":"test.txt","target":"data/test.txt"}]' | godotpcktool game.pck -a
 
 ## 🔧 All Options
 
-| Option                      | Short | Description                                                |
-| --------------------------- | ----- | ---------------------------------------------------------- |
-| `--pack`                    | `-p`  | Path to .pck file                                          |
-| `--action`                  | `-a`  | Action: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r` |
-| `--output`                  | `-o`  | Output directory for extraction                            |
-| `--file`                    | `-f`  | Files to add (comma-separated or multiple flags)           |
-| `--key`                     | `-k`  | **🔐 Encryption key (64 hex chars) for encrypted PCK**     |
-| `--remove-prefix`           |       | Prefix to remove from file paths                           |
-| `--command-file`            |       | JSON file with bulk commands                               |
-| `--set-godot-version`       |       | Set Godot version for new pck (e.g., `4.2.0`)              |
-| `--min-size-filter`         |       | Minimum file size filter                                   |
-| `--max-size-filter`         |       | Maximum file size filter                                   |
-| `--include-regex-filter`    | `-i`  | Include files matching regex                               |
-| `--exclude-regex-filter`    | `-e`  | Exclude files matching regex                               |
-| `--include-override-filter` |       | Override other filters for matching files                  |
-| `--print-hashes`            |       | Print MD5 hashes in list output                            |
-| `--quieter`                 | `-q`  | Reduce output verbosity                                    |
-| `--version`                 | `-v`  | Show version                                               |
-| `--help`                    | `-h`  | Show help                                                  |
+| Option                      | Short | Description                                                     |
+| --------------------------- | ----- | --------------------------------------------------------------- |
+| `--pack`                    | `-p`  | Path to .pck file                                               |
+| `--action`                  | `-a`  | Action: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r`      |
+| `--output`                  | `-o`  | Output directory for extraction                                 |
+| `--file`                    | `-f`  | Files to add (comma-separated or multiple flags)                |
+| `--encryption-key`          | `-k`  | **🔐 Decryption key (64 hex chars) for reading encrypted PCK**  |
+| `--encrypt-key`             | `-K`  | **🔐 Encryption key (64 hex chars) for creating encrypted PCK** |
+| `--encrypt-index`           |       | **🔐 Encrypt the file index when creating PCK**                 |
+| `--encrypt-files`           |       | **🔐 Encrypt file contents when creating PCK**                  |
+| `--remove-prefix`           |       | Prefix to remove from file paths                                |
+| `--command-file`            |       | JSON file with bulk commands                                    |
+| `--set-godot-version`       |       | Set Godot version for new pck (e.g., `4.2.0`)                   |
+| `--min-size-filter`         |       | Minimum file size filter                                        |
+| `--max-size-filter`         |       | Maximum file size filter                                        |
+| `--include-regex-filter`    | `-i`  | Include files matching regex                                    |
+| `--exclude-regex-filter`    | `-e`  | Exclude files matching regex                                    |
+| `--include-override-filter` |       | Override other filters for matching files                       |
+| `--print-hashes`            |       | Print MD5 hashes in list output                                 |
+| `--quieter`                 | `-q`  | Reduce output verbosity                                         |
+| `--version`                 | `-v`  | Show version                                                    |
+| `--help`                    | `-h`  | Show help                                                       |
 
 ## 🏗️ Building
 
@@ -294,7 +317,6 @@ GodotPckTool/
 
 ## ⚠️ Limitations
 
-- **Encryption (write)**: Creating new encrypted PCK files is not yet supported (decryption only)
 - **Sparse bundles**: Warning displayed, may not work correctly
 
 ## 🔐 Encryption Technical Details

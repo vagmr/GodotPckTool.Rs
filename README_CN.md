@@ -20,10 +20,11 @@
 
 ### 🔐 加密支持（）
 
-- **AES-256-CFB 解密** 支持加密的 PCK 文件（Godot 4+）
+- **AES-256-CFB 加密/解密** 支持加密的 PCK 文件（Godot 4+）
+- **创建加密 PCK** 支持索引加密和/或文件加密
 - 同时支持 **加密索引** 和 **加密文件** 的解密
 - **流式解密** 内存友好，适合大文件处理
-- 解密时自动进行 MD5 完整性校验
+- 加密/解密时自动进行 MD5 完整性校验
 
 ### 📦 嵌入式 PCK 支持（）
 
@@ -117,6 +118,25 @@ godotpcktool encrypted_game.pck -a e -o extracted --key 0123456789abcdef01234567
 ```
 
 > **注意**: 加密密钥与 Godot 导出预设中 "加密" → "加密密钥" 配置的密钥相同，应为 64 个十六进制字符的字符串。
+
+### 🔐 创建加密 PCK（）
+
+```bash
+# 创建同时加密索引和文件的加密 PCK
+godotpcktool encrypted.pck -a a files/ --remove-prefix files \
+  --encrypt-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --encrypt-index --encrypt-files
+
+# 仅加密文件索引（文件列表隐藏，但文件内容可读）
+godotpcktool encrypted.pck -a a files/ --remove-prefix files \
+  --encrypt-key YOUR_64_HEX_CHAR_KEY --encrypt-index
+
+# 仅加密文件内容（文件列表可见，但内容加密）
+godotpcktool encrypted.pck -a a files/ --remove-prefix files \
+  --encrypt-key YOUR_64_HEX_CHAR_KEY --encrypt-files
+```
+
+> **注意**: 加密需要 Godot 4+ PCK 格式（版本 >= 2）。创建新的加密 PCK 文件时请使用 `--set-godot-version 4.0.0` 或更高版本。
 
 ### 📦 从嵌入式 PCK 解包（）
 
@@ -222,7 +242,10 @@ echo '[{"file":"test.txt","target":"data/test.txt"}]' | godotpcktool game.pck -a
 | `--action`                  | `-a` | 操作: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r` |
 | `--output`                  | `-o` | 解包输出目录                                             |
 | `--file`                    | `-f` | 要添加的文件（逗号分隔或多次指定）                       |
-| `--key`                     | `-k` | **🔐 加密密钥（64 个十六进制字符）用于解密加密的 PCK**   |
+| `--encryption-key`          | `-k` | **🔐 解密密钥（64 个十六进制字符）用于读取加密的 PCK**   |
+| `--encrypt-key`             | `-K` | **🔐 加密密钥（64 个十六进制字符）用于创建加密的 PCK**   |
+| `--encrypt-index`           |      | **🔐 创建 PCK 时加密文件索引**                           |
+| `--encrypt-files`           |      | **🔐 创建 PCK 时加密文件内容**                           |
 | `--remove-prefix`           |      | 从文件路径移除的前缀                                     |
 | `--command-file`            |      | 批量命令 JSON 文件                                       |
 | `--set-godot-version`       |      | 设置新 pck 的 Godot 版本（如 `4.2.0`）                   |
@@ -294,7 +317,6 @@ GodotPckTool/
 
 ## ⚠️ 限制
 
-- **加密（写入）**: 暂不支持创建新的加密 PCK 文件（仅支持解密）
 - **稀疏包**: 显示警告，可能无法正常工作
 
 ## 🔐 加密技术细节

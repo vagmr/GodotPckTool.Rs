@@ -54,9 +54,22 @@ struct Args {
     #[arg(long = "print-hashes")]
     print_hashes: bool,
 
-    /// 32-byte hex string (64 characters) for encrypted PCK files
+    /// 32-byte hex string (64 characters) for encrypted PCK files (reading)
     #[arg(short = 'k', long = "encryption-key")]
     encryption_key: Option<String>,
+
+    /// Encryption key for creating encrypted PCK files (64 hex characters)
+    /// Use with --encrypt-index and/or --encrypt-files
+    #[arg(short = 'K', long = "encrypt-key")]
+    encrypt_key: Option<String>,
+
+    /// Encrypt the file index when creating PCK (requires --encrypt-key)
+    #[arg(long = "encrypt-index")]
+    encrypt_index: bool,
+
+    /// Encrypt file contents when creating PCK (requires --encrypt-key)
+    #[arg(long = "encrypt-files")]
+    encrypt_files: bool,
 
     #[arg(short = 'v', long = "version")]
     version: bool,
@@ -112,7 +125,7 @@ fn run() -> i32 {
         }
     };
 
-    // Parse encryption key if provided
+    // Parse encryption key if provided (for reading encrypted PCK)
     let encryption_key = match &args.encryption_key {
         Some(hex) => match godotpck_rs::parse_hex_key(hex) {
             Ok(key) => Some(key),
@@ -123,6 +136,24 @@ fn run() -> i32 {
         },
         None => None,
     };
+
+    // Parse encryption key for creating encrypted PCK
+    let encrypt_key = match &args.encrypt_key {
+        Some(hex) => match godotpck_rs::parse_hex_key(hex) {
+            Ok(key) => Some(key),
+            Err(e) => {
+                println!("ERROR: invalid encrypt key: {e}");
+                return 1;
+            }
+        },
+        None => None,
+    };
+
+    // Validate encryption options
+    if (args.encrypt_index || args.encrypt_files) && encrypt_key.is_none() {
+        println!("ERROR: --encrypt-index and --encrypt-files require --encrypt-key");
+        return 1;
+    }
 
     let mut files = args.files;
     files.extend(args.positional_files);
@@ -258,6 +289,9 @@ fn run() -> i32 {
             &file_entries,
             requested_godot_version,
             encryption_key,
+            encrypt_key,
+            args.encrypt_index,
+            args.encrypt_files,
         ),
         _ => {
             println!("ERROR: unknown action: {}", args.action);
@@ -420,6 +454,9 @@ fn add_action(
     file_entries: &[FileEntry],
     requested_godot_version: godotpck_rs::GodotVersion,
     encryption_key: Option<[u8; 32]>,
+    encrypt_key: Option<[u8; 32]>,
+    encrypt_index: bool,
+    encrypt_files: bool,
 ) -> i32 {
     if file_entries.is_empty() {
         println!("ERROR: no files specified");
@@ -449,6 +486,23 @@ fn add_action(
     } else {
         godotpck_rs::PckBuilder::new_empty(pack, requested_godot_version)
     };
+
+    // Set encryption settings if provided
+    if let Some(key) = encrypt_key {
+        if encrypt_index || encrypt_files {
+            builder.set_encryption(godotpck_rs::EncryptionSettings::new(
+                key,
+                encrypt_index,
+                encrypt_files,
+            ));
+            if !quieter {
+                println!(
+                    "Encryption enabled: index={}, files={}",
+                    encrypt_index, encrypt_files
+                );
+            }
+        }
+    }
 
     let strip_prefix = remove_prefix.unwrap_or("");
 

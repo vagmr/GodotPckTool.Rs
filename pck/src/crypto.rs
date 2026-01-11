@@ -7,11 +7,13 @@ use aes::cipher::{AsyncStreamCipher, BlockDecryptMut, BlockSizeUser};
 use aes::Aes256;
 use anyhow::{bail, Result};
 use cfb_mode::cipher::KeyIvInit;
-use cfb_mode::Decryptor;
+use cfb_mode::{Decryptor, Encryptor};
 use md5::{Digest, Md5};
+use rand::RngCore;
 use std::io::{Read, Write};
 
 type Aes256CfbDec = Decryptor<Aes256>;
+type Aes256CfbEnc = Encryptor<Aes256>;
 
 /// Encrypted block header size: MD5(16) + original_size(8) + IV(16) = 40 bytes
 pub const ENCRYPTED_HEADER_SIZE: usize = 40;
@@ -80,6 +82,64 @@ pub fn decrypt_cfb(data: &[u8], key: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
     let mut buffer = data.to_vec();
     decryptor.decrypt(&mut buffer);
     buffer
+}
+
+/// Encrypt data using AES-256-CFB mode
+///
+/// # Arguments
+/// * `data` - Plaintext data to encrypt
+/// * `key` - 32-byte encryption key
+/// * `iv` - 16-byte initialization vector
+///
+/// # Returns
+/// Encrypted data (aligned to 16 bytes, may be larger than input)
+pub fn encrypt_cfb(data: &[u8], key: &[u8; 32], iv: &[u8; 16]) -> Vec<u8> {
+    let encryptor = Aes256CfbEnc::new(key.into(), iv.into());
+    // Pad data to 16-byte boundary
+    let aligned_size = align_to_16(data.len() as u64) as usize;
+    let mut buffer = vec![0u8; aligned_size];
+    buffer[..data.len()].copy_from_slice(data);
+    encryptor.encrypt(&mut buffer);
+    buffer
+}
+
+/// Generate a random 16-byte IV for encryption
+pub fn generate_iv() -> [u8; 16] {
+    let mut iv = [0u8; 16];
+    rand::rng().fill_bytes(&mut iv);
+    iv
+}
+
+/// Compute MD5 hash of data
+pub fn compute_md5(data: &[u8]) -> [u8; 16] {
+    let mut hasher = Md5::new();
+    hasher.update(data);
+    let result = hasher.finalize();
+    let mut md5 = [0u8; 16];
+    md5.copy_from_slice(&result[..]);
+    md5
+}
+
+/// Encrypt a block of data and write the encrypted block (header + ciphertext)
+///
+/// # Arguments
+/// * `data` - Plaintext data to encrypt
+/// * `key` - 32-byte encryption key
+///
+/// # Returns
+/// Complete encrypted block: [MD5(16)] + [original_size(8)] + [IV(16)] + [encrypted_data]
+pub fn encrypt_block(data: &[u8], key: &[u8; 32]) -> Vec<u8> {
+    let md5 = compute_md5(data);
+    let iv = generate_iv();
+    let encrypted = encrypt_cfb(data, key, &iv);
+
+    let mut result = Vec::with_capacity(ENCRYPTED_HEADER_SIZE + encrypted.len());
+    result.extend_from_slice(&md5);
+    result.extend_from_slice(&(data.len() as i64).to_le_bytes());
+    result.extend_from_slice(&iv);
+    result.extend_from_slice(&encrypted);
+
+    result
 }
 
 /// Align size to 16-byte boundary (AES block size)

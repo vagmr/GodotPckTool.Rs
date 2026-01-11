@@ -8,7 +8,10 @@ use anyhow::{bail, Context, Result};
 use regex::Regex;
 
 mod crypto;
-pub use crypto::{parse_hex_key, ENCRYPTED_HEADER_SIZE};
+pub use crypto::{
+    align_to_16, compute_md5, encrypt_block, encrypt_cfb, generate_iv, parse_hex_key,
+    ENCRYPTED_HEADER_SIZE,
+};
 
 pub const PCK_HEADER_MAGIC: u32 = 0x4350_4447;
 
@@ -30,7 +33,8 @@ pub const GODOT_REMOVAL_TAG: &str = ".@@removal@@";
 
 mod write;
 pub use write::{
-    prepare_pck_path, prepare_pck_path_versioned, BuildEntry, EntrySource, PckBuilder,
+    prepare_pck_path, prepare_pck_path_versioned, BuildEntry, EncryptionSettings, EntrySource,
+    PckBuilder,
 };
 
 #[derive(Debug, Clone)]
