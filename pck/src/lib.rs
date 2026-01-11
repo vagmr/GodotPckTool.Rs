@@ -439,6 +439,89 @@ impl PckFile {
         &self.header
     }
 
+    /// Load only the PCK header without reading file entries.
+    /// This is useful for bruteforce operations where we need header info
+    /// but don't have the encryption key yet.
+    ///
+    /// # Arguments
+    /// * `path` - Path to the PCK file
+    pub fn load_header_only(path: impl AsRef<Path>) -> Result<Self> {
+        let path = path.as_ref().to_path_buf();
+
+        let mut file = File::open(&path)
+            .with_context(|| format!("opening pck file for reading: {}", path.display()))?;
+
+        // Detect embedded PCK or standalone PCK
+        let (pck_start, pck_end, embedded) = detect_embedded_pck(&mut file)?;
+
+        // Seek to PCK start and read magic
+        file.seek(SeekFrom::Start(pck_start))
+            .context("seeking to pck start")?;
+
+        let magic = read_u32_le(&mut file).context("reading magic")?;
+        if magic != PCK_HEADER_MAGIC {
+            bail!("invalid magic number");
+        }
+
+        let format_version = read_u32_le(&mut file).context("reading pck format version")?;
+
+        let major = read_u32_le(&mut file).context("reading godot major")?;
+        let minor = read_u32_le(&mut file).context("reading godot minor")?;
+        let patch = read_u32_le(&mut file).context("reading godot patch")?;
+
+        if format_version > MAX_SUPPORTED_PCK_VERSION_LOAD {
+            bail!("pck is unsupported version: {format_version}");
+        }
+
+        let mut flags = 0u32;
+        let mut file_offset_base = 0u64;
+        let mut directory_offset = None;
+
+        if format_version >= 2 {
+            flags = read_u32_le(&mut file).context("reading pck flags")?;
+            file_offset_base = read_u64_le(&mut file).context("reading file offset base")?;
+        }
+
+        // Note: We don't check for encryption here - that's the point of this method
+
+        if format_version >= 3 || (format_version == 2 && (flags & PCK_FILE_RELATIVE_BASE != 0)) {
+            file_offset_base = file_offset_base
+                .checked_add(pck_start)
+                .context("file offset base overflow")?;
+        }
+
+        if format_version >= 3 {
+            let dir_off = read_u64_le(&mut file).context("reading directory offset")?;
+            directory_offset = Some(dir_off);
+        }
+
+        // Skip reserved bytes
+        for _ in 0..16 {
+            read_u32_le(&mut file).context("reading reserved")?;
+        }
+
+        Ok(Self {
+            path,
+            header: PckHeader {
+                format_version,
+                godot_version: GodotVersion {
+                    major,
+                    minor,
+                    patch,
+                },
+                flags,
+                file_offset_base,
+                directory_offset,
+            },
+            entries: BTreeMap::new(), // Empty - we didn't read entries
+            excluded_by_filter: 0,
+            encryption_key: None,
+            embedded,
+            pck_start,
+            pck_end,
+        })
+    }
+
     pub fn entries(&self) -> impl Iterator<Item = &PckEntry> {
         self.entries.values()
     }

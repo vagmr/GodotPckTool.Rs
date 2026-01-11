@@ -121,8 +121,9 @@ impl Bruteforcer {
         let exe_path = exe_path.as_ref();
         let pck_path = pck_path.as_ref();
 
-        // Load PCK to get encryption info (without key, just to read header)
-        let pck = PckFile::load(pck_path, None, None)?;
+        // Load PCK header only (without reading file entries) to get encryption info
+        // This works even for encrypted PCK files since we don't need to decrypt the index
+        let pck = PckFile::load_header_only(pck_path)?;
 
         if !pck.is_encrypted() {
             bail!("PCK file is not encrypted");
@@ -221,7 +222,7 @@ impl Bruteforcer {
                     current
                 };
 
-                let remaining = if percent > 0.0 {
+                let remaining = if percent > 0.0 && percent < 100.0 {
                     Duration::from_secs_f64(elapsed.as_secs_f64() * (100.0 - percent) / percent)
                 } else {
                     Duration::from_secs(0)

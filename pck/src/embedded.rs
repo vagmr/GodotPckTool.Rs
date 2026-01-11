@@ -91,7 +91,12 @@ pub fn rip_pck<P1: AsRef<Path>, P2: AsRef<Path>>(
         }
     }
 
-    let mut output = File::create(output_path)
+    let mut output = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(output_path)
         .with_context(|| format!("Failed to create output file: {}", output_path.display()))?;
 
     // Copy PCK data from source to output
