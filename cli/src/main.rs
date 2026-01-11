@@ -95,6 +95,26 @@ struct Args {
     #[arg(long = "path-prefix")]
     path_prefix: Option<String>,
 
+    /// File alignment for PCK (common values: 0, 16, 32, 64). Default: 32 for Godot 4+
+    #[arg(long = "alignment")]
+    alignment: Option<u64>,
+
+    /// Pack files and embed into executable in one step
+    #[arg(long = "embed")]
+    embed: bool,
+
+    /// Overwrite existing files during extraction (default: skip existing)
+    #[arg(long = "overwrite")]
+    overwrite: bool,
+
+    /// Verify MD5 checksums after extraction
+    #[arg(long = "check-md5")]
+    check_md5: bool,
+
+    /// How to handle encrypted files without a key: skip (default) or cancel
+    #[arg(long = "no-key-mode", value_parser = ["skip", "cancel"])]
+    no_key_mode: Option<String>,
+
     #[arg(short = 'v', long = "version")]
     version: bool,
 
@@ -112,6 +132,9 @@ struct AddActionArgs<'a> {
     pack: &'a PathBuf,
     filter: &'a godotpck_rs::FileFilter,
     remove_prefix: Option<&'a str>,
+    path_prefix: Option<&'a str>,
+    alignment: Option<u64>,
+    embed_exe: Option<&'a PathBuf>,
     quieter: bool,
     file_entries: &'a [FileEntry],
     requested_godot_version: godotpck_rs::GodotVersion,
@@ -316,12 +339,18 @@ fn run() -> i32 {
             args.output.as_ref(),
             !args.quieter,
             encryption_key,
+            args.overwrite,
+            args.check_md5,
+            args.no_key_mode.as_deref(),
         ),
         "repack" | "r" => repack_action(&pack, &filter, &file_entries, encryption_key),
         "add" | "a" => add_action(AddActionArgs {
             pack: &pack,
             filter: &filter,
             remove_prefix: args.remove_prefix.as_deref(),
+            path_prefix: args.path_prefix.as_deref(),
+            alignment: args.alignment,
+            embed_exe: if args.embed { args.exe.as_ref() } else { None },
             quieter: args.quieter,
             file_entries: &file_entries,
             requested_godot_version,
@@ -357,6 +386,7 @@ fn run() -> i32 {
             encryption_key,
             &filter,
         ),
+        "info" | "i" => info_action(&pack, encryption_key),
         _ => {
             println!("ERROR: unknown action: {}", args.action);
             1
@@ -415,6 +445,9 @@ fn extract_action(
     output: Option<&PathBuf>,
     print_extracted: bool,
     encryption_key: Option<[u8; 32]>,
+    overwrite: bool,
+    check_md5: bool,
+    no_key_mode: Option<&str>,
 ) -> i32 {
     if !pack.exists() {
         println!(
@@ -446,9 +479,27 @@ fn extract_action(
         );
     }
 
-    println!("Extracting to: {}", output.display());
+    // Build extract options
+    let extract_options = godotpck_rs::ExtractOptions {
+        overwrite,
+        check_md5,
+        no_key_mode: match no_key_mode {
+            Some("cancel") => godotpck_rs::NoKeyMode::Cancel,
+            _ => godotpck_rs::NoKeyMode::Skip,
+        },
+    };
 
-    if let Err(e) = pck.extract(output, print_extracted) {
+    if print_extracted {
+        println!("Extracting to: {}", output.display());
+        if overwrite {
+            println!("  Overwrite mode: enabled");
+        }
+        if check_md5 {
+            println!("  MD5 verification: enabled");
+        }
+    }
+
+    if let Err(e) = pck.extract_with_options(output, print_extracted, &extract_options) {
         println!("ERROR: extraction failed");
         println!("{e:#}");
         return 2;
@@ -515,6 +566,9 @@ fn add_action(args: AddActionArgs<'_>) -> i32 {
         pack,
         filter,
         remove_prefix,
+        path_prefix,
+        alignment,
+        embed_exe,
         quieter,
         file_entries,
         requested_godot_version,
@@ -552,6 +606,14 @@ fn add_action(args: AddActionArgs<'_>) -> i32 {
         godotpck_rs::PckBuilder::new_empty(pack, requested_godot_version)
     };
 
+    // Set alignment if provided
+    if let Some(align) = alignment {
+        builder.set_alignment(align);
+        if !quieter {
+            println!("File alignment set to: {}", align);
+        }
+    }
+
     // Set encryption settings if provided
     if let Some(key) = encrypt_key {
         if encrypt_index || encrypt_files {
@@ -570,6 +632,7 @@ fn add_action(args: AddActionArgs<'_>) -> i32 {
     }
 
     let strip_prefix = remove_prefix.unwrap_or("");
+    let add_prefix = path_prefix.unwrap_or("");
 
     for entry in file_entries {
         if let Some(target) = &entry.target {
@@ -589,7 +652,13 @@ fn add_action(args: AddActionArgs<'_>) -> i32 {
                 }
             }
         } else {
-            match builder.add_files_from_filesystem(&entry.input_file, strip_prefix, Some(filter)) {
+            // Use the new method with path prefix support
+            match builder.add_files_from_filesystem_with_prefix(
+                &entry.input_file,
+                strip_prefix,
+                add_prefix,
+                Some(filter),
+            ) {
                 Ok(added) => {
                     if !quieter {
                         for (fs_path, pck_path) in added {
@@ -611,6 +680,27 @@ fn add_action(args: AddActionArgs<'_>) -> i32 {
     }
 
     println!("Writing / updating pck finished");
+
+    // If embed is requested, merge the PCK into the executable
+    if let Some(exe_path) = embed_exe {
+        if !quieter {
+            println!("Embedding PCK into executable: {}", exe_path.display());
+        }
+        match godotpck_rs::merge_pck(pack, exe_path, encryption_key) {
+            Ok(result) => {
+                println!("Successfully embedded PCK into executable!");
+                println!("  Output size: {} bytes", result.output_size);
+                println!("  PCK start offset: {}", result.pck_start);
+                // Optionally delete the standalone PCK file after embedding
+                // std::fs::remove_file(pack).ok();
+            }
+            Err(e) => {
+                println!("ERROR: Failed to embed PCK: {:#}", e);
+                return 4;
+            }
+        }
+    }
+
     0
 }
 
@@ -1066,4 +1156,111 @@ fn patch_action(
             2
         }
     }
+}
+
+/// Display detailed information about a PCK file
+fn info_action(pack: &PathBuf, encryption_key: Option<[u8; 32]>) -> i32 {
+    // First, try to get basic file info
+    let file_size = match std::fs::metadata(pack) {
+        Ok(meta) => meta.len(),
+        Err(e) => {
+            println!("ERROR: Cannot read file: {}", e);
+            return 2;
+        }
+    };
+
+    // Load the PCK file
+    let pck = match godotpck_rs::PckFile::load(pack, None, encryption_key) {
+        Ok(p) => p,
+        Err(e) => {
+            println!("ERROR: Failed to load PCK: {:#}", e);
+            return 2;
+        }
+    };
+
+    let header = pck.header();
+
+    println!("PCK File Information");
+    println!("====================");
+    println!();
+    println!("File: {}", pack.display());
+    println!(
+        "File Size: {} bytes ({:.2} MB)",
+        file_size,
+        file_size as f64 / 1024.0 / 1024.0
+    );
+    println!();
+    println!("Header Information:");
+    println!("  Format Version: {}", header.format_version);
+    println!("  Godot Version: {}", header.godot_version);
+    println!("  Flags: 0x{:08X}", header.flags);
+    println!("  File Offset Base: {}", header.file_offset_base);
+    if let Some(dir_offset) = header.directory_offset {
+        println!("  Directory Offset: {}", dir_offset);
+    }
+    println!();
+    println!("PCK Properties:");
+    println!("  Is Embedded: {}", pck.is_embedded());
+    if pck.is_embedded() {
+        println!("  PCK Start: {}", pck.pck_start());
+        println!("  PCK End: {}", pck.pck_end());
+        println!("  PCK Size: {} bytes", pck.pck_end() - pck.pck_start());
+    }
+    println!(
+        "  Index Encrypted: {}",
+        header.flags & godotpck_rs::PACK_DIR_ENCRYPTED != 0
+    );
+    println!();
+    println!("Content Statistics:");
+    let entries: Vec<_> = pck.entries().collect();
+    let total_size: u64 = entries.iter().map(|e| e.size).sum();
+    let encrypted_files = entries
+        .iter()
+        .filter(|e| e.flags & godotpck_rs::PCK_FILE_ENCRYPTED != 0)
+        .count();
+    let deleted_files = entries
+        .iter()
+        .filter(|e| e.flags & godotpck_rs::PCK_FILE_DELETED != 0)
+        .count();
+
+    println!("  File Count: {}", entries.len());
+    println!(
+        "  Total Content Size: {} bytes ({:.2} MB)",
+        total_size,
+        total_size as f64 / 1024.0 / 1024.0
+    );
+    println!("  Encrypted Files: {}", encrypted_files);
+    println!("  Deleted Files: {}", deleted_files);
+    println!("  Excluded by Filter: {}", pck.excluded_by_filter());
+
+    // Show file type breakdown
+    let mut extensions: std::collections::HashMap<String, (usize, u64)> =
+        std::collections::HashMap::new();
+    for entry in &entries {
+        let ext = std::path::Path::new(&entry.path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("(no ext)")
+            .to_lowercase();
+        let (count, size) = extensions.entry(ext).or_insert((0, 0));
+        *count += 1;
+        *size += entry.size;
+    }
+
+    if !extensions.is_empty() {
+        println!();
+        println!("File Types (top 10 by count):");
+        let mut ext_vec: Vec<_> = extensions.into_iter().collect();
+        ext_vec.sort_by(|a, b| b.1 .0.cmp(&a.1 .0)); // Sort by count descending
+        for (ext, (count, size)) in ext_vec.iter().take(10) {
+            println!(
+                "  .{}: {} files ({:.2} MB)",
+                ext,
+                count,
+                *size as f64 / 1024.0 / 1024.0
+            );
+        }
+    }
+
+    0
 }

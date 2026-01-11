@@ -183,6 +183,17 @@ impl PckBuilder {
         }
     }
 
+    /// Set file alignment for the PCK file.
+    /// Common values: 0 (no alignment), 16, 32 (Godot 4 default), 64
+    pub fn set_alignment(&mut self, alignment: u64) {
+        self.alignment = alignment;
+    }
+
+    /// Get current alignment setting
+    pub fn alignment(&self) -> u64 {
+        self.alignment
+    }
+
     pub fn output_path(&self) -> &Path {
         &self.output_path
     }
@@ -280,6 +291,87 @@ impl PckBuilder {
             let fs_path_string = fs_path.to_string_lossy();
             let (pck_path, is_removal) =
                 prepare_pck_path_versioned(&fs_path_string, strip_prefix, version);
+            let flags = if is_removal {
+                crate::PCK_FILE_DELETED
+            } else {
+                0
+            };
+
+            if self.add_single_file_with_flags(fs_path, pck_path.clone(), flags, filter)? {
+                added.push((fs_path_string.to_string(), pck_path));
+            }
+        }
+
+        Ok(added)
+    }
+
+    /// Add files from filesystem with version-aware path handling and optional path prefix.
+    /// This method uses the builder's godot_version to determine path format.
+    ///
+    /// # Arguments
+    /// * `root` - Root directory or file to add
+    /// * `strip_prefix` - Prefix to strip from filesystem paths
+    /// * `path_prefix` - Prefix to add to PCK paths (e.g., "mods/" will result in "res://mods/...")
+    /// * `filter` - Optional file filter
+    pub fn add_files_from_filesystem_with_prefix(
+        &mut self,
+        root: &str,
+        strip_prefix: &str,
+        path_prefix: &str,
+        filter: Option<&FileFilter>,
+    ) -> Result<Vec<(String, String)>> {
+        let root_path = PathBuf::from(root);
+        if !root_path.exists() {
+            bail!("path doesn't exist: {root}");
+        }
+
+        let mut added = Vec::new();
+        let version = Some(self.godot_version);
+
+        // Helper to add prefix to pck path
+        let add_prefix = |pck_path: String| -> String {
+            if path_prefix.is_empty() {
+                return pck_path;
+            }
+            // pck_path is like "res://path/to/file" or just "path/to/file" for Godot 4.4+
+            if let Some(rest) = pck_path.strip_prefix(crate::GODOT_RES_PATH) {
+                // Godot 3/4.0-4.3 format: res://...
+                format!("{}{}{}", crate::GODOT_RES_PATH, path_prefix, rest)
+            } else {
+                // Godot 4.4+ format: no res:// prefix
+                format!("{}{}", path_prefix, pck_path)
+            }
+        };
+
+        if root_path.is_file() {
+            let (pck_path, is_removal) = prepare_pck_path_versioned(root, strip_prefix, version);
+            let pck_path = add_prefix(pck_path);
+            let flags = if is_removal {
+                crate::PCK_FILE_DELETED
+            } else {
+                0
+            };
+            if self.add_single_file_with_flags(&root_path, pck_path.clone(), flags, filter)? {
+                added.push((root.to_string(), pck_path));
+            }
+            return Ok(added);
+        }
+
+        if !root_path.is_dir() {
+            bail!("path is neither a file nor a directory: {root}");
+        }
+
+        for entry in WalkDir::new(&root_path) {
+            let entry = entry.with_context(|| format!("walking directory: {root}"))?;
+            if entry.file_type().is_dir() {
+                continue;
+            }
+
+            let fs_path = entry.path();
+            let fs_path_string = fs_path.to_string_lossy();
+            let (pck_path, is_removal) =
+                prepare_pck_path_versioned(&fs_path_string, strip_prefix, version);
+            let pck_path = add_prefix(pck_path);
             let flags = if is_removal {
                 crate::PCK_FILE_DELETED
             } else {

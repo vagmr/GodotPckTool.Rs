@@ -105,6 +105,27 @@ View help:
 godotpcktool --help
 ```
 
+### 📊 PCK Information
+
+Display detailed information about a PCK file:
+
+```bash
+# Short form
+godotpcktool game.pck -a i
+
+# Long form
+godotpcktool --pack game.pck --action info
+```
+
+Output includes:
+
+- Format version and Godot version
+- File size and flags
+- Embedded PCK detection
+- Encryption status
+- File count and content statistics
+- File type breakdown (top 10 by count)
+
 ### Listing Contents
 
 ```bash
@@ -129,6 +150,16 @@ godotpcktool --pack game.pck --action extract --output extracted
 
 # Quiet mode (less output)
 godotpcktool game.pck -a e -o extracted -q
+
+# Overwrite existing files (default: skip existing)
+godotpcktool game.pck -a e -o extracted --overwrite
+
+# Verify MD5 checksums after extraction
+godotpcktool game.pck -a e -o extracted --check-md5
+
+# Handle encrypted files without key: skip (default) or cancel
+godotpcktool game.pck -a e -o extracted --no-key-mode skip
+godotpcktool game.pck -a e -o extracted --no-key-mode cancel
 ```
 
 ### 🔐 Extracting Encrypted PCK ()
@@ -161,6 +192,21 @@ godotpcktool encrypted.pck -a a files/ --remove-prefix files \
 ```
 
 > **Note**: Encryption requires Godot 4+ PCK format (version >= 2). Use `--set-godot-version 4.0.0` or higher when creating new encrypted PCK files.
+
+### ⚙️ Advanced Pack Options ()
+
+```bash
+# Set file alignment (common values: 0, 16, 32, 64)
+godotpcktool game.pck -a a files/ --alignment 32
+
+# Add path prefix to all files (e.g., for mods)
+godotpcktool game.pck -a a mod_files/ --path-prefix mods/
+# Files will be stored as res://mods/... instead of res://...
+
+# Pack and embed into executable in one step
+godotpcktool game.pck -a a files/ --embed --exe game.exe
+# Creates game.pck then embeds it into game.exe
+```
 
 ### 📦 Extracting from Embedded PCK ()
 

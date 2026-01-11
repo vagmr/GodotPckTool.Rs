@@ -105,6 +105,27 @@ docker run --rm -v /path/to/files:/data godotpcktool -p /data/game.pck -a list
 godotpcktool --help
 ```
 
+### 📊 PCK 信息
+
+显示 PCK 文件的详细信息：
+
+```bash
+# 简写形式
+godotpcktool game.pck -a i
+
+# 完整形式
+godotpcktool --pack game.pck --action info
+```
+
+输出内容包括：
+
+- 格式版本和 Godot 版本
+- 文件大小和标志位
+- 嵌入式 PCK 检测
+- 加密状态
+- 文件数量和内容统计
+- 文件类型分布（按数量排序前 10）
+
 ### 列出内容
 
 ```bash
@@ -129,6 +150,16 @@ godotpcktool --pack game.pck --action extract --output extracted
 
 # 静默模式（减少输出）
 godotpcktool game.pck -a e -o extracted -q
+
+# 覆盖已存在的文件（默认：跳过已存在的文件）
+godotpcktool game.pck -a e -o extracted --overwrite
+
+# 解包后验证 MD5 校验和
+godotpcktool game.pck -a e -o extracted --check-md5
+
+# 处理没有密钥的加密文件：skip（跳过，默认）或 cancel（取消）
+godotpcktool game.pck -a e -o extracted --no-key-mode skip
+godotpcktool game.pck -a e -o extracted --no-key-mode cancel
 ```
 
 ### 🔐 解包加密 PCK（）
@@ -161,6 +192,21 @@ godotpcktool encrypted.pck -a a files/ --remove-prefix files \
 ```
 
 > **注意**: 加密需要 Godot 4+ PCK 格式（版本 >= 2）。创建新的加密 PCK 文件时请使用 `--set-godot-version 4.0.0` 或更高版本。
+
+### ⚙️ 高级打包选项（）
+
+```bash
+# 设置文件对齐（常用值：0, 16, 32, 64）
+godotpcktool game.pck -a a files/ --alignment 32
+
+# 为所有文件添加路径前缀（例如用于 Mod）
+godotpcktool game.pck -a a mod_files/ --path-prefix mods/
+# 文件将存储为 res://mods/... 而不是 res://...
+
+# 一步完成打包并嵌入到可执行文件
+godotpcktool game.pck -a a files/ --embed --exe game.exe
+# 创建 game.pck 然后嵌入到 game.exe
+```
 
 ### 📦 从嵌入式 PCK 解包（）
 

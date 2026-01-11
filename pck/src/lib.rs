@@ -483,19 +483,38 @@ impl PckFile {
     }
 
     pub fn extract(&self, output_prefix: impl AsRef<Path>, print_extracted: bool) -> Result<()> {
+        self.extract_with_options(output_prefix, print_extracted, &ExtractOptions::default())
+    }
+
+    pub fn extract_with_options(
+        &self,
+        output_prefix: impl AsRef<Path>,
+        print_extracted: bool,
+        options: &ExtractOptions,
+    ) -> Result<()> {
         let output_base = output_prefix.as_ref();
 
         let mut reader = File::open(&self.path)
             .with_context(|| format!("opening pck file for extracting: {}", self.path.display()))?;
 
         for entry in self.entries() {
-            // Print info for special flags
+            // Handle encrypted files without key
             if entry.flags & PCK_FILE_ENCRYPTED != 0 && self.encryption_key.is_none() {
-                println!(
-                    "WARNING: pck file ({}) is marked as encrypted, skipping (no encryption key)",
-                    entry.path
-                );
-                continue;
+                match options.no_key_mode {
+                    NoKeyMode::Skip => {
+                        println!(
+                            "WARNING: pck file ({}) is marked as encrypted, skipping (no encryption key)",
+                            entry.path
+                        );
+                        continue;
+                    }
+                    NoKeyMode::Cancel => {
+                        bail!(
+                            "Encrypted file encountered without key: {}. Use --no-key-mode skip to skip encrypted files.",
+                            entry.path
+                        );
+                    }
+                }
             }
             if entry.flags & PCK_FILE_DELETED != 0 {
                 println!(
@@ -512,15 +531,29 @@ impl PckFile {
             }
             let target_file = output_base.join(&relative_path);
 
+            // Check if file exists and handle overwrite option
+            if target_file.exists() && !options.overwrite {
+                if print_extracted {
+                    println!("Skipping (exists): {}", target_file.display());
+                }
+                continue;
+            }
+
             if print_extracted {
                 let encrypted_note = if entry.flags & PCK_FILE_ENCRYPTED != 0 {
                     " [decrypting]"
                 } else {
                     ""
                 };
+                let overwrite_note = if target_file.exists() {
+                    " [overwrite]"
+                } else {
+                    ""
+                };
                 println!(
-                    "Extracting{} {} to {}",
+                    "Extracting{}{} {} to {}",
                     encrypted_note,
+                    overwrite_note,
                     entry.path,
                     target_file.display()
                 );
@@ -582,12 +615,38 @@ impl PckFile {
                 reader
                     .seek(SeekFrom::Start(entry.offset))
                     .with_context(|| format!("seeking to entry offset for {}", entry.path))?;
-                let mut take = std::io::Read::by_ref(&mut reader).take(entry.size);
-                let copied = std::io::copy(&mut take, &mut writer)
-                    .with_context(|| format!("writing entry data for {}", entry.path))?;
 
-                if copied != entry.size {
-                    bail!("reading file entry content failed (specified offset or data length is too large, pck may be corrupt or malformed)");
+                if options.check_md5 {
+                    // Read into buffer to compute MD5 while writing
+                    let mut buffer = vec![0u8; entry.size as usize];
+                    reader
+                        .read_exact(&mut buffer)
+                        .with_context(|| format!("reading entry data for {}", entry.path))?;
+
+                    // Compute MD5 and verify
+                    let computed_md5 = compute_md5(&buffer);
+                    if computed_md5 != entry.md5 {
+                        bail!(
+                            "MD5 mismatch for {}: expected {}, got {}",
+                            entry.path,
+                            format_md5(entry.md5),
+                            format_md5(computed_md5)
+                        );
+                    }
+
+                    // Write the verified data
+                    writer
+                        .write_all(&buffer)
+                        .with_context(|| format!("writing entry data for {}", entry.path))?;
+                } else {
+                    // Fast path: copy without MD5 verification
+                    let mut take = std::io::Read::by_ref(&mut reader).take(entry.size);
+                    let copied = std::io::copy(&mut take, &mut writer)
+                        .with_context(|| format!("writing entry data for {}", entry.path))?;
+
+                    if copied != entry.size {
+                        bail!("reading file entry content failed (specified offset or data length is too large, pck may be corrupt or malformed)");
+                    }
                 }
             }
 
@@ -596,6 +655,28 @@ impl PckFile {
 
         Ok(())
     }
+}
+
+/// Options for extraction
+#[derive(Debug, Clone, Default)]
+pub struct ExtractOptions {
+    /// Whether to overwrite existing files (default: false, skip existing)
+    pub overwrite: bool,
+    /// Whether to verify MD5 checksums after extraction (default: false)
+    pub check_md5: bool,
+    /// What to do when encountering encrypted files without a key
+    /// "skip" = skip the file, "cancel" = abort extraction
+    pub no_key_mode: NoKeyMode,
+}
+
+/// Mode for handling encrypted files when no key is provided
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum NoKeyMode {
+    /// Skip encrypted files and continue (default)
+    #[default]
+    Skip,
+    /// Cancel extraction when encountering encrypted files
+    Cancel,
 }
 
 fn format_md5(bytes: [u8; 16]) -> String {

@@ -5,7 +5,40 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [未发布]
+## [v0.2.1] - 2026-01-11
+
+### 新增
+
+- 📊 **Info 命令**
+
+  - 显示 PCK 文件的详细诊断信息
+  - 输出格式版本、Godot 版本、标志位
+  - 显示嵌入式 PCK 检测结果和偏移信息
+  - 显示加密状态（索引加密/文件加密）
+  - 统计文件数量、总大小、加密文件数、删除文件数
+  - 按数量排序显示前 10 种文件类型
+
+- ⚙️ **Pack 高级选项**
+
+  - `--alignment` - 设置文件对齐（常用值：0, 16, 32, 64）
+  - `--path-prefix` - 为打包文件添加路径前缀（例如 `mods/`）
+  - `--embed` - 一步完成打包并嵌入到可执行文件
+
+- 📤 **Extract 高级选项**
+  - `--overwrite` - 覆盖已存在的文件（默认：跳过已存在的文件）
+  - `--check-md5` - 解包后验证 MD5 校验和
+  - `--no-key-mode skip|cancel` - 处理没有密钥的加密文件（skip=跳过，cancel=取消）
+
+### CLI 新命令
+
+- `godotpcktool game.pck -a info` - 显示 PCK 详细信息
+- `godotpcktool game.pck -a i` - 简写形式
+- `godotpcktool game.pck -a a files/ --alignment 32` - 设置文件对齐
+- `godotpcktool game.pck -a a mod_files/ --path-prefix mods/` - 添加路径前缀
+- `godotpcktool game.pck -a a files/ --embed --exe game.exe` - 打包并嵌入
+- `godotpcktool game.pck -a e -o extracted --overwrite` - 覆盖已存在的文件
+- `godotpcktool game.pck -a e -o extracted --check-md5` - 验证 MD5 校验和
+- `godotpcktool game.pck -a e -o extracted --no-key-mode cancel` - 遇到加密文件时取消
 
 ## [v0.2.0] - 2026-01-11
 
