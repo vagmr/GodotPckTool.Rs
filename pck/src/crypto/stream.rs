@@ -101,7 +101,11 @@ impl StreamingDecryptor {
     }
 
     /// Decrypt all remaining data from reader to writer.
-    pub fn decrypt_all<R: Read, W: Write>(&mut self, reader: &mut R, writer: &mut W) -> Result<u64> {
+    pub fn decrypt_all<R: Read, W: Write>(
+        &mut self,
+        reader: &mut R,
+        writer: &mut W,
+    ) -> Result<u64> {
         let mut total = 0u64;
         loop {
             let written = self.decrypt_chunk(reader, writer, DEFAULT_CHUNK_SIZE)?;
