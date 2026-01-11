@@ -54,13 +54,13 @@ jobs:
         run: cargo build --release --verbose
 
       - name: Smoke test
-        run: ./target/release/godotpcktool-rs --help
+        run: ./target/release/godotpcktool --help
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: godotpcktool-linux-x86_64
-          path: target/release/godotpcktool-rs
+          path: target/release/godotpcktool
 
   build-windows:
     name: Build Windows
@@ -85,13 +85,13 @@ jobs:
         run: cargo build --release --verbose
 
       - name: Smoke test
-        run: ./target/release/godotpcktool-rs.exe --help
+        run: ./target/release/godotpcktool.exe --help
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: godotpcktool-windows-x86_64
-          path: target/release/godotpcktool-rs.exe
+          path: target/release/godotpcktool.exe
 
   build-macos:
     name: Build macOS
@@ -116,13 +116,13 @@ jobs:
         run: cargo build --release --verbose
 
       - name: Smoke test
-        run: ./target/release/godotpcktool-rs --help
+        run: ./target/release/godotpcktool --help
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: godotpcktool-macos-x86_64
-          path: target/release/godotpcktool-rs
+          path: target/release/godotpcktool
 
   clippy:
     name: Clippy
