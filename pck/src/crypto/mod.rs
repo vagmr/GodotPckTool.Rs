@@ -6,7 +6,6 @@
 mod block;
 mod key;
 mod stream;
-
 pub use block::{
     align_to_16, compute_md5, decrypt_cfb, encrypt_block, encrypt_cfb, generate_iv, verify_md5,
     EncryptedHeader, ENCRYPTED_HEADER_SIZE,

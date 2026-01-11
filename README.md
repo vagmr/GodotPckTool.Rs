@@ -32,6 +32,13 @@ A fast, cross-platform CLI tool for unpacking and packing Godot `.pck` files, re
 - Extract PCK data from `.exe` or other executable formats
 - Supports both standalone `.pck` and embedded PCK files
 
+### 🔑 Key Bruteforcer ()
+
+- **Brute-force search** for 32-byte AES-256 encryption keys in executables
+- **Multi-threaded** parallel scanning for maximum performance
+- **Progress reporting** with ETA and keys/second metrics
+- **Cancellable** operations with graceful shutdown
+
 ### 🛤️ Path Compatibility ()
 
 - **`user://`** paths extracted to `@@user@@/` directory
@@ -148,6 +155,24 @@ godotpcktool game.exe -a e -o extracted
 # Works with both .exe (Windows) and other executable formats
 ```
 
+### 🔑 Bruteforce Encryption Key ()
+
+```bash
+# Search for encryption key in game executable
+godotpcktool encrypted.pck -a bruteforce --exe game.exe
+
+# Short form
+godotpcktool encrypted.pck -a bf --exe game.exe
+
+# Specify scan range (useful for large executables)
+godotpcktool encrypted.pck -a bf --exe game.exe --start-address 0x1000 --end-address 0x100000
+
+# Specify number of threads (default: CPU cores)
+godotpcktool encrypted.pck -a bf --exe game.exe --threads 8
+```
+
+> **Note**: The bruteforcer scans the executable file byte-by-byte looking for valid 32-byte AES-256 keys. This can take a long time for large files. Progress is reported in real-time with ETA.
+
 ### Adding Content
 
 ```bash
@@ -236,28 +261,32 @@ echo '[{"file":"test.txt","target":"data/test.txt"}]' | godotpcktool game.pck -a
 
 ## 🔧 All Options
 
-| Option                      | Short | Description                                                     |
-| --------------------------- | ----- | --------------------------------------------------------------- |
-| `--pack`                    | `-p`  | Path to .pck file                                               |
-| `--action`                  | `-a`  | Action: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r`      |
-| `--output`                  | `-o`  | Output directory for extraction                                 |
-| `--file`                    | `-f`  | Files to add (comma-separated or multiple flags)                |
-| `--encryption-key`          | `-k`  | **🔐 Decryption key (64 hex chars) for reading encrypted PCK**  |
-| `--encrypt-key`             | `-K`  | **🔐 Encryption key (64 hex chars) for creating encrypted PCK** |
-| `--encrypt-index`           |       | **🔐 Encrypt the file index when creating PCK**                 |
-| `--encrypt-files`           |       | **🔐 Encrypt file contents when creating PCK**                  |
-| `--remove-prefix`           |       | Prefix to remove from file paths                                |
-| `--command-file`            |       | JSON file with bulk commands                                    |
-| `--set-godot-version`       |       | Set Godot version for new pck (e.g., `4.2.0`)                   |
-| `--min-size-filter`         |       | Minimum file size filter                                        |
-| `--max-size-filter`         |       | Maximum file size filter                                        |
-| `--include-regex-filter`    | `-i`  | Include files matching regex                                    |
-| `--exclude-regex-filter`    | `-e`  | Exclude files matching regex                                    |
-| `--include-override-filter` |       | Override other filters for matching files                       |
-| `--print-hashes`            |       | Print MD5 hashes in list output                                 |
-| `--quieter`                 | `-q`  | Reduce output verbosity                                         |
-| `--version`                 | `-v`  | Show version                                                    |
-| `--help`                    | `-h`  | Show help                                                       |
+| Option                      | Short | Description                                                                   |
+| --------------------------- | ----- | ----------------------------------------------------------------------------- |
+| `--pack`                    | `-p`  | Path to .pck file                                                             |
+| `--action`                  | `-a`  | Action: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r`, `bruteforce`/`bf` |
+| `--output`                  | `-o`  | Output directory for extraction                                               |
+| `--file`                    | `-f`  | Files to add (comma-separated or multiple flags)                              |
+| `--encryption-key`          | `-k`  | **🔐 Decryption key (64 hex chars) for reading encrypted PCK**                |
+| `--encrypt-key`             | `-K`  | **🔐 Encryption key (64 hex chars) for creating encrypted PCK**               |
+| `--encrypt-index`           |       | **🔐 Encrypt the file index when creating PCK**                               |
+| `--encrypt-files`           |       | **🔐 Encrypt file contents when creating PCK**                                |
+| `--remove-prefix`           |       | Prefix to remove from file paths                                              |
+| `--command-file`            |       | JSON file with bulk commands                                                  |
+| `--set-godot-version`       |       | Set Godot version for new pck (e.g., `4.2.0`)                                 |
+| `--min-size-filter`         |       | Minimum file size filter                                                      |
+| `--max-size-filter`         |       | Maximum file size filter                                                      |
+| `--include-regex-filter`    | `-i`  | Include files matching regex                                                  |
+| `--exclude-regex-filter`    | `-e`  | Exclude files matching regex                                                  |
+| `--include-override-filter` |       | Override other filters for matching files                                     |
+| `--exe`                     |       | **🔑 Executable file to scan for encryption key (bruteforce)**                |
+| `--start-address`           |       | **🔑 Start address for bruteforce scan (default: 0)**                         |
+| `--end-address`             |       | **🔑 End address for bruteforce scan (default: file size)**                   |
+| `--threads`                 |       | **🔑 Number of threads for bruteforce (default: CPU cores)**                  |
+| `--print-hashes`            |       | Print MD5 hashes in list output                                               |
+| `--quieter`                 | `-q`  | Reduce output verbosity                                                       |
+| `--version`                 | `-v`  | Show version                                                                  |
+| `--help`                    | `-h`  | Show help                                                                     |
 
 ## 🏗️ Building
 
@@ -308,9 +337,12 @@ GodotPckTool/
 ├── pck/                # Core library
 │   ├── Cargo.toml
 │   └── src/
-│       ├── lib.rs      # PCK read/parse logic
-│       ├── write.rs    # PCK write logic
-│       └── crypto.rs   # 🔐 AES-256-CFB encryption/decryption
+│       ├── lib.rs       # PCK read/parse logic
+│       ├── write.rs     # PCK write logic
+│       ├── crypto/      # 🔐 Encryption module
+│       │   ├── mod.rs   # AES-256-CFB encryption/decryption
+│       │   └── block.rs # Block cipher operations
+│       └── bruteforce.rs # 🔑 Key bruteforcer
 ├── Dockerfile
 └── README.md
 ```

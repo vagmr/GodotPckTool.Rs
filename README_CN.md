@@ -32,6 +32,13 @@
 - 从 `.exe` 或其他可执行格式中提取 PCK 数据
 - 同时支持独立 `.pck` 文件和嵌入式 PCK
 
+### 🔑 密钥暴力破解（）
+
+- **暴力搜索** 从可执行文件中查找 32 字节 AES-256 加密密钥
+- **多线程** 并行扫描，最大化性能
+- **进度报告** 显示预计剩余时间和每秒尝试密钥数
+- **可取消** 支持优雅中断操作
+
 ### 🛤️ 路径兼容性（）
 
 - **`user://`** 路径解包到 `@@user@@/` 目录
@@ -148,6 +155,24 @@ godotpcktool game.exe -a e -o extracted
 # 支持 .exe（Windows）和其他可执行格式
 ```
 
+### 🔑 暴力破解加密密钥（）
+
+```bash
+# 从游戏可执行文件中搜索加密密钥
+godotpcktool encrypted.pck -a bruteforce --exe game.exe
+
+# 简写形式
+godotpcktool encrypted.pck -a bf --exe game.exe
+
+# 指定扫描范围（适用于大型可执行文件）
+godotpcktool encrypted.pck -a bf --exe game.exe --start-address 0x1000 --end-address 0x100000
+
+# 指定线程数（默认：CPU 核心数）
+godotpcktool encrypted.pck -a bf --exe game.exe --threads 8
+```
+
+> **注意**: 暴力破解器逐字节扫描可执行文件，寻找有效的 32 字节 AES-256 密钥。对于大文件可能需要较长时间。进度会实时报告，包含预计剩余时间。
+
 ### 添加内容
 
 ```bash
@@ -236,28 +261,32 @@ echo '[{"file":"test.txt","target":"data/test.txt"}]' | godotpcktool game.pck -a
 
 ## 🔧 所有选项
 
-| 选项                        | 简写 | 说明                                                     |
-| --------------------------- | ---- | -------------------------------------------------------- |
-| `--pack`                    | `-p` | .pck 文件路径                                            |
-| `--action`                  | `-a` | 操作: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r` |
-| `--output`                  | `-o` | 解包输出目录                                             |
-| `--file`                    | `-f` | 要添加的文件（逗号分隔或多次指定）                       |
-| `--encryption-key`          | `-k` | **🔐 解密密钥（64 个十六进制字符）用于读取加密的 PCK**   |
-| `--encrypt-key`             | `-K` | **🔐 加密密钥（64 个十六进制字符）用于创建加密的 PCK**   |
-| `--encrypt-index`           |      | **🔐 创建 PCK 时加密文件索引**                           |
-| `--encrypt-files`           |      | **🔐 创建 PCK 时加密文件内容**                           |
-| `--remove-prefix`           |      | 从文件路径移除的前缀                                     |
-| `--command-file`            |      | 批量命令 JSON 文件                                       |
-| `--set-godot-version`       |      | 设置新 pck 的 Godot 版本（如 `4.2.0`）                   |
-| `--min-size-filter`         |      | 最小文件大小过滤                                         |
-| `--max-size-filter`         |      | 最大文件大小过滤                                         |
-| `--include-regex-filter`    | `-i` | 包含匹配正则的文件                                       |
-| `--exclude-regex-filter`    | `-e` | 排除匹配正则的文件                                       |
-| `--include-override-filter` |      | 覆盖其他过滤器                                           |
-| `--print-hashes`            |      | 在列表输出中显示 MD5 哈希                                |
-| `--quieter`                 | `-q` | 减少输出详细程度                                         |
-| `--version`                 | `-v` | 显示版本                                                 |
-| `--help`                    | `-h` | 显示帮助                                                 |
+| 选项                        | 简写 | 说明                                                                        |
+| --------------------------- | ---- | --------------------------------------------------------------------------- |
+| `--pack`                    | `-p` | .pck 文件路径                                                               |
+| `--action`                  | `-a` | 操作: `list`/`l`, `extract`/`e`, `add`/`a`, `repack`/`r`, `bruteforce`/`bf` |
+| `--output`                  | `-o` | 解包输出目录                                                                |
+| `--file`                    | `-f` | 要添加的文件（逗号分隔或多次指定）                                          |
+| `--encryption-key`          | `-k` | **🔐 解密密钥（64 个十六进制字符）用于读取加密的 PCK**                      |
+| `--encrypt-key`             | `-K` | **🔐 加密密钥（64 个十六进制字符）用于创建加密的 PCK**                      |
+| `--encrypt-index`           |      | **🔐 创建 PCK 时加密文件索引**                                              |
+| `--encrypt-files`           |      | **🔐 创建 PCK 时加密文件内容**                                              |
+| `--remove-prefix`           |      | 从文件路径移除的前缀                                                        |
+| `--command-file`            |      | 批量命令 JSON 文件                                                          |
+| `--set-godot-version`       |      | 设置新 pck 的 Godot 版本（如 `4.2.0`）                                      |
+| `--min-size-filter`         |      | 最小文件大小过滤                                                            |
+| `--max-size-filter`         |      | 最大文件大小过滤                                                            |
+| `--include-regex-filter`    | `-i` | 包含匹配正则的文件                                                          |
+| `--exclude-regex-filter`    | `-e` | 排除匹配正则的文件                                                          |
+| `--include-override-filter` |      | 覆盖其他过滤器                                                              |
+| `--exe`                     |      | **🔑 要扫描加密密钥的可执行文件（暴力破解）**                               |
+| `--start-address`           |      | **🔑 暴力破解扫描起始地址（默认：0）**                                      |
+| `--end-address`             |      | **🔑 暴力破解扫描结束地址（默认：文件大小）**                               |
+| `--threads`                 |      | **🔑 暴力破解线程数（默认：CPU 核心数）**                                   |
+| `--print-hashes`            |      | 在列表输出中显示 MD5 哈希                                                   |
+| `--quieter`                 | `-q` | 减少输出详细程度                                                            |
+| `--version`                 | `-v` | 显示版本                                                                    |
+| `--help`                    | `-h` | 显示帮助                                                                    |
 
 ## 🏗️ 构建
 
@@ -308,9 +337,12 @@ GodotPckTool/
 ├── pck/                # 核心库
 │   ├── Cargo.toml
 │   └── src/
-│       ├── lib.rs      # PCK 读取/解析逻辑
-│       ├── write.rs    # PCK 写入逻辑
-│       └── crypto.rs   # 🔐 AES-256-CFB 加密/解密
+│       ├── lib.rs       # PCK 读取/解析逻辑
+│       ├── write.rs     # PCK 写入逻辑
+│       ├── crypto/      # 🔐 加密模块
+│       │   ├── mod.rs   # AES-256-CFB 加密/解密
+│       │   └── block.rs # 块加密操作
+│       └── bruteforce.rs # 🔑 密钥暴力破解
 ├── Dockerfile
 └── README.md
 ```

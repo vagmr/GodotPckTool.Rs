@@ -71,6 +71,22 @@ struct Args {
     #[arg(long = "encrypt-files")]
     encrypt_files: bool,
 
+    /// Executable file to scan for encryption key (for bruteforce action)
+    #[arg(long = "exe")]
+    exe: Option<PathBuf>,
+
+    /// Start address for bruteforce scan (default: 0)
+    #[arg(long = "start-address")]
+    start_address: Option<u64>,
+
+    /// End address for bruteforce scan (default: file size)
+    #[arg(long = "end-address")]
+    end_address: Option<u64>,
+
+    /// Number of threads for bruteforce (default: CPU cores)
+    #[arg(long = "threads")]
+    threads: Option<usize>,
+
     #[arg(short = 'v', long = "version")]
     version: bool,
 
@@ -306,6 +322,13 @@ fn run() -> i32 {
             encrypt_index: args.encrypt_index,
             encrypt_files: args.encrypt_files,
         }),
+        "bruteforce" | "bf" => bruteforce_action(
+            &pack,
+            args.exe.as_ref(),
+            args.start_address,
+            args.end_address,
+            args.threads,
+        ),
         _ => {
             println!("ERROR: unknown action: {}", args.action);
             1
@@ -580,4 +603,95 @@ fn parse_godot_version(version: &str) -> Result<(u32, u32, u32), String> {
         .map_err(|_| "invalid version format, expected format: x.y.z".to_string())?;
 
     Ok((major, minor, patch))
+}
+
+fn bruteforce_action(
+    pack: &PathBuf,
+    exe: Option<&PathBuf>,
+    start_address: Option<u64>,
+    end_address: Option<u64>,
+    threads: Option<usize>,
+) -> i32 {
+    let exe_path = match exe {
+        Some(p) => p,
+        None => {
+            println!("ERROR: --exe is required for bruteforce action");
+            return 1;
+        }
+    };
+
+    if !pack.exists() {
+        println!(
+            "ERROR: specified pck file doesn't exist: {}",
+            pack.display()
+        );
+        return 2;
+    }
+
+    if !exe_path.exists() {
+        println!(
+            "ERROR: specified executable doesn't exist: {}",
+            exe_path.display()
+        );
+        return 2;
+    }
+
+    println!("Starting bruteforce search...");
+    println!("  PCK file: {}", pack.display());
+    println!("  Executable: {}", exe_path.display());
+
+    let mut config = godotpck_rs::BruteforceConfig::default();
+    if let Some(start) = start_address {
+        config.start_address = start;
+        println!("  Start address: 0x{:x}", start);
+    }
+    if let Some(end) = end_address {
+        config.end_address = Some(end);
+        println!("  End address: 0x{:x}", end);
+    }
+    if let Some(t) = threads {
+        config.threads = t;
+    }
+    println!("  Threads: {}", config.threads);
+    println!();
+
+    let bruteforcer = godotpck_rs::Bruteforcer::with_config(config);
+
+    // Progress callback
+    let progress_cb: godotpck_rs::ProgressCallback = Box::new(|progress| {
+        print!(
+            "\r[{:6.2}%] Address: 0x{:x} | Speed: {} keys/s | Elapsed: {:?} | ETA: {:?}    ",
+            progress.percent,
+            progress.current_address,
+            progress.keys_per_second,
+            progress.elapsed,
+            progress.remaining
+        );
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+    });
+
+    match bruteforcer.start(exe_path, pack, Some(progress_cb)) {
+        Ok(result) => {
+            println!(); // New line after progress
+            if result.found {
+                println!();
+                println!("=== KEY FOUND! ===");
+                println!("Key (hex): {}", result.key_hex);
+                println!("Address: 0x{:x} ({})", result.address, result.address);
+                println!();
+                println!("Use this key with: --encryption-key {}", result.key_hex);
+                0
+            } else {
+                println!();
+                println!("No matching key found in the specified range.");
+                1
+            }
+        }
+        Err(e) => {
+            println!();
+            println!("ERROR: Bruteforce failed: {:#}", e);
+            2
+        }
+    }
 }

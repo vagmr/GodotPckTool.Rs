@@ -16,3 +16,4 @@ walkdir.workspace = true
 aes.workspace = true
 cfb-mode.workspace = true
 rand.workspace = true
+num_cpus.workspace = true
