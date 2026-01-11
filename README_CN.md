@@ -111,7 +111,7 @@ godotpcktool game.pck -a e -o extracted -q
 
 ```bash
 # 使用解密密钥解包加密的 PCK
-godotpcktool encrypted_game.pck -a e -o extracted --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+godotpcktool encrypted_game.pck -a e -o extracted --encryption-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 # 密钥必须是 64 个十六进制字符（32 字节 / 256 位）
 # 这与 Godot 导出设置中使用的密钥相同

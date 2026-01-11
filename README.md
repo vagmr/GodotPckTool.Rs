@@ -111,7 +111,7 @@ godotpcktool game.pck -a e -o extracted -q
 
 ```bash
 # Extract encrypted PCK with decryption key
-godotpcktool encrypted_game.pck -a e -o extracted --key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+godotpcktool encrypted_game.pck -a e -o extracted --encryption-key 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
 # The key must be 64 hex characters (32 bytes / 256 bits)
 # This is the same key used in Godot's export settings

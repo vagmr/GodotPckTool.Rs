@@ -249,10 +249,8 @@ impl PckFile {
             file_offset_base = read_u64_le(&mut file).context("reading file offset base")?;
         }
 
-        if flags & PACK_DIR_ENCRYPTED != 0 {
-            if encryption_key.is_none() {
-                bail!("PCK is encrypted, please provide --encryption-key");
-            }
+        if flags & PACK_DIR_ENCRYPTED != 0 && encryption_key.is_none() {
+            bail!("PCK is encrypted, please provide --encryption-key");
         }
 
         if flags & PCK_FILE_SPARSE_BUNDLE != 0 {

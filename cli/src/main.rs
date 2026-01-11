@@ -84,6 +84,19 @@ struct FileEntry {
     target: Option<String>,
 }
 
+struct AddActionArgs<'a> {
+    pack: &'a PathBuf,
+    filter: &'a godotpck_rs::FileFilter,
+    remove_prefix: Option<&'a str>,
+    quieter: bool,
+    file_entries: &'a [FileEntry],
+    requested_godot_version: godotpck_rs::GodotVersion,
+    encryption_key: Option<[u8; 32]>,
+    encrypt_key: Option<[u8; 32]>,
+    encrypt_index: bool,
+    encrypt_files: bool,
+}
+
 fn main() {
     std::process::exit(run());
 }
@@ -281,18 +294,18 @@ fn run() -> i32 {
             encryption_key,
         ),
         "repack" | "r" => repack_action(&pack, &filter, &file_entries, encryption_key),
-        "add" | "a" => add_action(
-            &pack,
-            &filter,
-            args.remove_prefix.as_deref(),
-            args.quieter,
-            &file_entries,
+        "add" | "a" => add_action(AddActionArgs {
+            pack: &pack,
+            filter: &filter,
+            remove_prefix: args.remove_prefix.as_deref(),
+            quieter: args.quieter,
+            file_entries: &file_entries,
             requested_godot_version,
             encryption_key,
             encrypt_key,
-            args.encrypt_index,
-            args.encrypt_files,
-        ),
+            encrypt_index: args.encrypt_index,
+            encrypt_files: args.encrypt_files,
+        }),
         _ => {
             println!("ERROR: unknown action: {}", args.action);
             1
@@ -446,18 +459,19 @@ fn repack_action(
     0
 }
 
-fn add_action(
-    pack: &PathBuf,
-    filter: &godotpck_rs::FileFilter,
-    remove_prefix: Option<&str>,
-    quieter: bool,
-    file_entries: &[FileEntry],
-    requested_godot_version: godotpck_rs::GodotVersion,
-    encryption_key: Option<[u8; 32]>,
-    encrypt_key: Option<[u8; 32]>,
-    encrypt_index: bool,
-    encrypt_files: bool,
-) -> i32 {
+fn add_action(args: AddActionArgs<'_>) -> i32 {
+    let AddActionArgs {
+        pack,
+        filter,
+        remove_prefix,
+        quieter,
+        file_entries,
+        requested_godot_version,
+        encryption_key,
+        encrypt_key,
+        encrypt_index,
+        encrypt_files,
+    } = args;
     if file_entries.is_empty() {
         println!("ERROR: no files specified");
         return 1;

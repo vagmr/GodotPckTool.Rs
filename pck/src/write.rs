@@ -380,9 +380,7 @@ impl PckBuilder {
             // Path bytes
             index_data.extend_from_slice(path_bytes);
             // Padding
-            for _ in 0..padding {
-                index_data.push(0);
-            }
+            index_data.extend(std::iter::repeat_n(0, padding));
 
             // Record position for patching later (relative to index start)
             header_patch_points.insert(path.clone(), index_data.len() as u64);
