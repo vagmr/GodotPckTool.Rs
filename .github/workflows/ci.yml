@@ -90,7 +90,7 @@ jobs:
           mv godotpcktool.Rs-linux-x86_64.tar.gz ../../
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: godotpcktool.Rs-linux-x86_64
           path: godotpcktool.Rs-linux-x86_64.tar.gz
@@ -127,7 +127,7 @@ jobs:
           Move-Item godotpcktool.Rs-windows-x86_64.zip ../../
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: godotpcktool.Rs-windows-x86_64
           path: godotpcktool.Rs-windows-x86_64.zip
@@ -164,7 +164,7 @@ jobs:
           mv godotpcktool.Rs-macos-x86_64.tar.gz ../../
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: godotpcktool.Rs-macos-x86_64
           path: godotpcktool.Rs-macos-x86_64.tar.gz
